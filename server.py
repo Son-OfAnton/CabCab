@@ -21,8 +21,10 @@ def cli():
 @cli.command()
 @click.option('--port', default=3000, help='Port to run the server on')
 def start(port):
-    """Start the JSON server."""
-    pid_file = os.path.join(os.path.dirname(__file__), 'server.pid')
+    """Start the custom JSON server."""
+    # Get the base directory (one level up from app directory)
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pid_file = os.path.join(base_dir, 'server.pid')
     
     # Check if server is already running
     if os.path.exists(pid_file):
@@ -30,30 +32,20 @@ def start(port):
             pid = f.read().strip()
         
         click.echo(f"Server already running with PID {pid}")
-        click.echo(f"If the server is not running, delete the 'server.pid' file and try again")
+        click.echo(f"If the server is not running, delete the '{pid_file}' file and try again")
         return
 
-    # Get the path to the db.json file
-    db_path = os.path.join(os.path.dirname(__file__), 'data', 'db.json')
+    # Get the path to the server script
+    server_script = os.path.join(base_dir, 'test_server.py')
     
-    # Make sure the db.json file exists
-    if not os.path.exists(db_path):
-        click.echo(f"Database file not found: {db_path}")
-        click.echo("Creating empty database file...")
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        with open(db_path, 'w') as f:
-            f.write('{"users":[],"drivers":[],"vehicles":[],"locations":[],"rides":[],"payments":[]}')
-
-    # Start the JSON server in the background
-    click.echo(f"Starting JSON server on port {port}...")
-    click.echo(f"Using database: {db_path}")
+    # Start the server in the background
+    click.echo(f"Starting custom JSON server on port {port}...")
     
     try:
+        # Start the server as a separate process
         process = subprocess.Popen([
-            'json-server-py', 
-            '--watch', db_path, 
-            '--port', str(port),
-            '--host', '0.0.0.0'
+            sys.executable,  # Use current Python interpreter
+            server_script
         ], 
         stdout=subprocess.PIPE, 
         stderr=subprocess.PIPE)
@@ -88,7 +80,9 @@ def start(port):
 @cli.command()
 def stop():
     """Stop the JSON server."""
-    pid_file = os.path.join(os.path.dirname(__file__), 'server.pid')
+    # Get the base directory (one level up from app directory)
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pid_file = os.path.join(base_dir, 'server.pid')
     
     if not os.path.exists(pid_file):
         click.echo("No running server found")
@@ -131,7 +125,9 @@ def stop():
 @cli.command()
 def status():
     """Check if the JSON server is running."""
-    pid_file = os.path.join(os.path.dirname(__file__), 'server.pid')
+    # Get the base directory (one level up from app directory)
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pid_file = os.path.join(base_dir, 'server.pid')
     
     if not os.path.exists(pid_file):
         click.echo("Server is not running")
@@ -156,7 +152,9 @@ def status():
 @cli.command()
 def reset():
     """Reset the database to empty state."""
-    db_path = os.path.join(os.path.dirname(__file__), 'data', 'db.json')
+    # Get the base directory (one level up from app directory)
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(base_dir, 'data', 'db.json')
     
     if os.path.exists(db_path):
         try:

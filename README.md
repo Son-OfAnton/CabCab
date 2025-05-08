@@ -11,28 +11,51 @@ git clone https://github.com/yourusername/cabcab.git
 cd cabcab
 ```
 
-Install the package in development mode:
+Install the required dependencies:
 
 ```bash
-pip install -e .
+pip install -r requirements.txt
+```
+
+## Running the Application
+
+You can run the application using the provided scripts:
+
+```bash
+# For main CLI commands
+./cabcab
+
+# For server management
+./cabcab-server
 ```
 
 ## Server Setup
 
-CabCab uses json-server-py as a mock backend server. To start the server:
+CabCab uses a custom JSON server for data storage and retrieval.
+
+### Starting and Managing the Server
 
 ```bash
 # Start the JSON server
-cabcab-server start
+./cabcab-server start
 
 # Check server status
-cabcab-server status
+./cabcab-server status
 
 # Stop the server
-cabcab-server stop
+./cabcab-server stop
 
 # Reset the database
-cabcab-server reset
+./cabcab-server reset
+```
+
+### Direct server execution
+
+You can also run the server directly:
+
+```bash
+# Start the server
+python test_server.py
 ```
 
 ## Authentication
@@ -42,7 +65,7 @@ cabcab-server reset
 Register a new user account:
 
 ```bash
-cabcab auth signup
+./cabcab auth signup
 ```
 
 You will be prompted for your email, password, first name, last name, and phone number.
@@ -52,7 +75,7 @@ You will be prompted for your email, password, first name, last name, and phone 
 Log in to your existing account:
 
 ```bash
-cabcab auth signin
+./cabcab auth signin
 ```
 
 You will be prompted for your email and password.
@@ -62,7 +85,7 @@ You will be prompted for your email and password.
 View your current user information:
 
 ```bash
-cabcab auth whoami
+./cabcab auth whoami
 ```
 
 ### Signout
@@ -70,7 +93,7 @@ cabcab auth whoami
 Sign out from your account:
 
 ```bash
-cabcab auth signout
+./cabcab auth signout
 ```
 
 ## Usage
@@ -78,20 +101,42 @@ cabcab auth signout
 After authentication, you can use the CLI application:
 
 ```bash
-cabcab run hello
-cabcab run hello --option value
+./cabcab run hello
+./cabcab run hello --option value
 ```
+
+## API Endpoints
+
+The following endpoints are available in the custom JSON server:
+
+- `GET /`: Get the entire database
+- `GET /<collection>`: Get all items in a collection
+- `POST /<collection>`: Add a new item to a collection
+- `GET /<collection>/<id>`: Get an item by ID
+- `PUT /<collection>/<id>`: Update an item
+- `DELETE /<collection>/<id>`: Delete an item
+- `GET /<collection>/query?param=value`: Query items by parameters
+
+Collections available:
+- users
+- drivers
+- vehicles
+- locations
+- rides
+- payments
 
 ## Development
-
-### Setup Development Environment
-
-```bash
-pip install -r requirements.txt
-```
 
 ### Running Tests
 
 ```bash
 pytest
 ```
+
+## Troubleshooting
+
+If you encounter issues with the server:
+
+1. Check if there's already a server running with `./cabcab-server status`
+2. If the server.pid file exists but the server isn't running, delete the file
+3. Check the server logs for error messages

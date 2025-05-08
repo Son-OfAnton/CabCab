@@ -69,8 +69,8 @@ class AuthService:
         """
         payload = {
             "user_id": user_id,
-            "exp": datetime.now(datetime.timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS),
-            "iat": datetime.now(datetime.timezone.utc)
+            "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
+            "iat": datetime.utcnow()
         }
         return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
     
@@ -111,11 +111,16 @@ class AuthService:
         Raises:
             AuthError: If registration fails
         """
-        # Check if user already exists
         try:
-            response = requests.get(f"{BASE_URL}/users?email={email}")
-            response.raise_for_status()
-            existing_users = response.json()
+            # Check if user already exists
+            response = requests.get(f"{BASE_URL}/users/query?email={email}")
+            
+            if response.status_code == 404:
+                # Collection not found, this is the first user
+                existing_users = []
+            else:
+                response.raise_for_status()
+                existing_users = response.json()
             
             if existing_users:
                 raise AuthError(f"User with email {email} already exists")
@@ -140,7 +145,8 @@ class AuthService:
             
             # Remove password before returning
             user_data = response.json()
-            del user_data['password']
+            if "password" in user_data:
+                del user_data["password"]
             
             # Generate token
             token = AuthService._generate_jwt(user_id)
@@ -170,7 +176,12 @@ class AuthService:
         """
         try:
             # Find the user
-            response = requests.get(f"{BASE_URL}/users?email={email}")
+            response = requests.get(f"{BASE_URL}/users/query?email={email}")
+            
+            if response.status_code == 404:
+                # Collection not found
+                raise AuthError(f"No user found with email {email}")
+            
             response.raise_for_status()
             users = response.json()
             
@@ -221,11 +232,16 @@ class AuthService:
             
             # Get the user from the database
             response = requests.get(f"{BASE_URL}/users/{user_id}")
+            
+            if response.status_code == 404:
+                raise AuthError(f"User with ID {user_id} not found")
+                
             response.raise_for_status()
             user = response.json()
             
             # Remove password before returning
-            del user['password']
+            if "password" in user:
+                del user['password']
             
             return user
             

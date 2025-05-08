@@ -1,6 +1,7 @@
 /GDrive
 .env
 .env.test
+/data
 *.log
 marknote.egg-info/
 

@@ -3,7 +3,7 @@
 .env.test
 /data
 *.log
-marknote.egg-info/
+/cabcab.egg-info
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

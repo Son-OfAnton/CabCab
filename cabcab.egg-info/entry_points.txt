@@ -1,0 +1,3 @@
+[console_scripts]
+cabcab = app.cli:main
+cabcab-server = server:cli

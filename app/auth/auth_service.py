@@ -135,6 +135,7 @@ class AuthService:
                 "last_name": last_name,
                 "phone": phone,
                 "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
                 "is_active": True,
                 "payment_methods": []
             }
@@ -247,3 +248,119 @@ class AuthService:
             
         except requests.RequestException as e:
             raise AuthError(f"Token verification failed: {str(e)}")
+    
+    @staticmethod
+    def update_profile(token: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update a user's profile.
+        
+        Args:
+            token: JWT token for authentication
+            update_data: Dictionary containing fields to update
+            
+        Returns:
+            Dict: Updated user data
+            
+        Raises:
+            AuthError: If profile update fails
+        """
+        try:
+            # Get the current user from the token
+            payload = AuthService._verify_jwt(token)
+            user_id = payload.get('user_id')
+            
+            if not user_id:
+                raise AuthError("Invalid token payload")
+            
+            # Get the current user data
+            response = requests.get(f"{BASE_URL}/users/{user_id}")
+            
+            if response.status_code == 404:
+                raise AuthError(f"User with ID {user_id} not found")
+                
+            response.raise_for_status()
+            current_user = response.json()
+            
+            # Fields that cannot be updated
+            protected_fields = ['id', 'email', 'password', 'created_at', 'payment_methods']
+            
+            # Create updated user data
+            updated_user = current_user.copy()
+            
+            # Update allowed fields
+            for key, value in update_data.items():
+                if key not in protected_fields and value is not None:
+                    updated_user[key] = value
+            
+            # Update timestamp
+            updated_user['updated_at'] = datetime.now().isoformat()
+            
+            # Save the updated user
+            response = requests.put(f"{BASE_URL}/users/{user_id}", json=updated_user)
+            response.raise_for_status()
+            updated_user_data = response.json()
+            
+            # Remove password before returning
+            if "password" in updated_user_data:
+                del updated_user_data["password"]
+            
+            return updated_user_data
+            
+        except requests.RequestException as e:
+            raise AuthError(f"Profile update failed: {str(e)}")
+    
+    @staticmethod
+    def change_password(token: str, current_password: str, new_password: str) -> Dict[str, Any]:
+        """
+        Change a user's password.
+        
+        Args:
+            token: JWT token for authentication
+            current_password: Current password for verification
+            new_password: New password to set
+            
+        Returns:
+            Dict: Updated user data
+            
+        Raises:
+            AuthError: If password change fails
+        """
+        try:
+            # Get the current user from the token
+            payload = AuthService._verify_jwt(token)
+            user_id = payload.get('user_id')
+            
+            if not user_id:
+                raise AuthError("Invalid token payload")
+            
+            # Get the current user data
+            response = requests.get(f"{BASE_URL}/users/{user_id}")
+            
+            if response.status_code == 404:
+                raise AuthError(f"User with ID {user_id} not found")
+                
+            response.raise_for_status()
+            current_user = response.json()
+            
+            # Verify the current password
+            if not AuthService._verify_password(current_password, current_user['password']):
+                raise AuthError("Current password is incorrect")
+            
+            # Create updated user data
+            updated_user = current_user.copy()
+            updated_user['password'] = AuthService._hash_password(new_password)
+            updated_user['updated_at'] = datetime.now().isoformat()
+            
+            # Save the updated user
+            response = requests.put(f"{BASE_URL}/users/{user_id}", json=updated_user)
+            response.raise_for_status()
+            updated_user_data = response.json()
+            
+            # Remove password before returning
+            if "password" in updated_user_data:
+                del updated_user_data["password"]
+            
+            return updated_user_data
+            
+        except requests.RequestException as e:
+            raise AuthError(f"Password change failed: {str(e)}")

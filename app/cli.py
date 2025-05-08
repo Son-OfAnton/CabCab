@@ -3,8 +3,8 @@
 import os
 import click
 import json
-from app.main import process_command
-from app.auth import AuthService, AuthError
+from .main import process_command
+from .auth import AuthService, AuthError
 
 # Config file to store auth token
 CONFIG_DIR = os.path.expanduser("~/.cabcab")
@@ -116,9 +116,70 @@ def whoami():
         click.echo(f"Signed in as: {user['first_name']} {user['last_name']}")
         click.echo(f"Email: {user['email']}")
         click.echo(f"Phone: {user['phone']}")
+        if 'updated_at' in user:
+            click.echo(f"Last updated: {user['updated_at']}")
     except AuthError as e:
         click.echo(f"Session error: {str(e)}", err=True)
         click.echo("Please sign in again.")
+
+
+@auth.group()
+def profile():
+    """Manage your profile."""
+    pass
+
+
+@profile.command()
+@click.option("--first-name", help="Update your first name")
+@click.option("--last-name", help="Update your last name")
+@click.option("--phone", help="Update your phone number")
+def update(first_name, last_name, phone):
+    """Update your profile information."""
+    token = get_token()
+    
+    if not token:
+        click.echo("You are not signed in. Please sign in first.", err=True)
+        return
+    
+    # Collect update data
+    update_data = {}
+    if first_name:
+        update_data['first_name'] = first_name
+    if last_name:
+        update_data['last_name'] = last_name
+    if phone:
+        update_data['phone'] = phone
+
+    if not update_data:
+        click.echo("No update information provided. Use the options to specify what to update.")
+        click.echo("Example: cabcab auth profile update --first-name \"New Name\"")
+        return
+
+    try:
+        updated_user = AuthService.update_profile(token, update_data)
+        click.echo("Profile updated successfully!")
+        click.echo(f"Name: {updated_user['first_name']} {updated_user['last_name']}")
+        click.echo(f"Phone: {updated_user['phone']}")
+    except AuthError as e:
+        click.echo(f"Error updating profile: {str(e)}", err=True)
+
+
+@profile.command()
+@click.option("--current", prompt=True, hide_input=True, help="Current password")
+@click.option("--new", prompt=True, hide_input=True, confirmation_prompt=True, help="New password")
+def change_password(current, new):
+    """Change your password."""
+    token = get_token()
+    
+    if not token:
+        click.echo("You are not signed in. Please sign in first.", err=True)
+        return
+    
+    try:
+        AuthService.change_password(token, current, new)
+        click.echo("Password changed successfully!")
+    except AuthError as e:
+        click.echo(f"Error changing password: {str(e)}", err=True)
 
 
 @cli.command()

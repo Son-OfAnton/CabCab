@@ -1,10 +1,13 @@
 """Command Line Interface for CabCab application."""
 
+from datetime import datetime
 import os
 import click
 import json
-from .main import process_command
-from .auth import AuthService, AuthError
+
+import requests
+from app.main import process_command
+from app.auth.auth_service import AuthService, AuthError, UserType
 
 # Config file to store auth token
 CONFIG_DIR = os.path.expanduser("~/.cabcab")
@@ -47,6 +50,25 @@ def is_authenticated() -> bool:
         return False
 
 
+def require_user_type(required_types):
+    """Decorator to require specific user types."""
+    def decorator(f):
+        def wrapped(*args, **kwargs):
+            token = get_token()
+            if not token:
+                click.echo("You are not signed in. Please sign in first.", err=True)
+                return
+            
+            try:
+                AuthService.require_user_type(token, required_types)
+                return f(*args, **kwargs)
+            except AuthError as e:
+                click.echo(f"Access denied: {str(e)}", err=True)
+                return
+        return wrapped
+    return decorator
+
+
 @click.group()
 def cli():
     """CabCab CLI application."""
@@ -59,22 +81,67 @@ def auth():
     pass
 
 
-@auth.command()
+@auth.group(name="register")
+def register_group():
+    """Register a new user."""
+    pass
+
+
+@register_group.command(name="passenger")
 @click.option("--email", prompt=True, help="Your email address")
 @click.option("--password", prompt=True, hide_input=True, help="Your password")
 @click.option("--first-name", prompt=True, help="Your first name")
 @click.option("--last-name", prompt=True, help="Your last name")
 @click.option("--phone", prompt=True, help="Your phone number")
-def signup(email, password, first_name, last_name, phone):
-    """Register a new user."""
+def register_passenger(email, password, first_name, last_name, phone):
+    """Register as a passenger."""
     try:
-        result = AuthService.register(email, password, first_name, last_name, phone)
+        result = AuthService.register_passenger(email, password, first_name, last_name, phone)
         save_token(result["token"])
-        click.echo(f"User {first_name} {last_name} registered successfully!")
+        click.echo(f"Passenger {first_name} {last_name} registered successfully!")
         click.echo(f"Email: {email}")
         click.echo("You are now logged in.")
     except AuthError as e:
-        click.echo(f"Error during signup: {str(e)}", err=True)
+        click.echo(f"Error during registration: {str(e)}", err=True)
+
+
+@register_group.command(name="driver")
+@click.option("--email", prompt=True, help="Your email address")
+@click.option("--password", prompt=True, hide_input=True, help="Your password")
+@click.option("--first-name", prompt=True, help="Your first name")
+@click.option("--last-name", prompt=True, help="Your last name")
+@click.option("--phone", prompt=True, help="Your phone number")
+@click.option("--license", prompt=True, help="Your driver's license number")
+def register_driver(email, password, first_name, last_name, phone, license):
+    """Register as a driver."""
+    try:
+        result = AuthService.register_driver(email, password, first_name, last_name, phone, license)
+        save_token(result["token"])
+        click.echo(f"Driver {first_name} {last_name} registered successfully!")
+        click.echo(f"Email: {email}")
+        click.echo("Your account requires verification before accepting rides.")
+        click.echo("You are now logged in.")
+    except AuthError as e:
+        click.echo(f"Error during registration: {str(e)}", err=True)
+
+
+@register_group.command(name="admin")
+@click.option("--email", prompt=True, help="Admin email address")
+@click.option("--password", prompt=True, hide_input=True, help="Admin password")
+@click.option("--first-name", prompt=True, help="Admin first name")
+@click.option("--last-name", prompt=True, help="Admin last name")
+@click.option("--phone", prompt=True, help="Admin phone number")
+@click.option("--code", prompt=True, hide_input=True, help="Admin registration code")
+def register_admin(email, password, first_name, last_name, phone, code):
+    """Register as an admin (requires authorization code)."""
+    try:
+        result = AuthService.register_admin(email, password, first_name, last_name, phone, code)
+        save_token(result["token"])
+        click.echo(f"Admin {first_name} {last_name} registered successfully!")
+        click.echo(f"Email: {email}")
+        click.echo("You are now logged in with admin privileges.")
+    except AuthError as e:
+        click.echo(f"Error during admin registration: {str(e)}", err=True)
 
 
 @auth.command()
@@ -87,7 +154,19 @@ def signin(email, password):
         save_token(result["token"])
         user = result["user"]
         click.echo(f"Welcome back, {user['first_name']} {user['last_name']}!")
-        click.echo("You are now logged in.")
+        
+        # Display different messages based on user type
+        user_type = user.get('user_type')
+        if user_type == UserType.PASSENGER.value:
+            click.echo("You are logged in as a passenger.")
+        elif user_type == UserType.DRIVER.value:
+            available = "available" if user.get('is_available', False) else "not available"
+            verified = "verified" if user.get('is_verified', False) else "not verified"
+            click.echo(f"You are logged in as a driver. Status: {verified}, {available} for rides.")
+        elif user_type == UserType.ADMIN.value:
+            click.echo("You are logged in as an admin.")
+        else:
+            click.echo("You are now logged in.")
     except AuthError as e:
         click.echo(f"Error during signin: {str(e)}", err=True)
 
@@ -113,11 +192,35 @@ def whoami():
     
     try:
         user = AuthService.verify_token(token)
+        user_type = user.get('user_type')
+        
+        # Basic user info for all user types
         click.echo(f"Signed in as: {user['first_name']} {user['last_name']}")
         click.echo(f"Email: {user['email']}")
         click.echo(f"Phone: {user['phone']}")
-        if 'updated_at' in user:
-            click.echo(f"Last updated: {user['updated_at']}")
+        click.echo(f"User Type: {user_type.capitalize()}")
+        if user.get('rating'):
+            click.echo(f"Rating: {user['rating']}")
+        click.echo(f"Account created: {user['created_at']}")
+        click.echo(f"Last updated: {user['updated_at']}")
+        
+        # Type-specific information
+        if user_type == UserType.PASSENGER.value:
+            payment_methods = len(user.get('payment_methods', []))
+            click.echo(f"Payment methods: {payment_methods}")
+        
+        elif user_type == UserType.DRIVER.value:
+            click.echo(f"License number: {user.get('license_number', 'Not provided')}")
+            click.echo(f"Verification status: {'Verified' if user.get('is_verified', False) else 'Not verified'}")
+            click.echo(f"Availability: {'Available' if user.get('is_available', False) else 'Not available'} for rides")
+            if user.get('vehicle_id'):
+                click.echo(f"Vehicle ID: {user['vehicle_id']}")
+            else:
+                click.echo("No vehicle assigned.")
+        
+        elif user_type == UserType.ADMIN.value:
+            click.echo("Admin privileges: Active")
+        
     except AuthError as e:
         click.echo(f"Session error: {str(e)}", err=True)
         click.echo("Please sign in again.")
@@ -160,6 +263,7 @@ def update(first_name, last_name, phone):
         click.echo("Profile updated successfully!")
         click.echo(f"Name: {updated_user['first_name']} {updated_user['last_name']}")
         click.echo(f"Phone: {updated_user['phone']}")
+        click.echo(f"Last updated: {updated_user['updated_at']}")
     except AuthError as e:
         click.echo(f"Error updating profile: {str(e)}", err=True)
 
@@ -180,6 +284,79 @@ def change_password(current, new):
         click.echo("Password changed successfully!")
     except AuthError as e:
         click.echo(f"Error changing password: {str(e)}", err=True)
+
+
+@cli.group()
+def driver():
+    """Driver specific commands."""
+    pass
+
+
+@driver.command()
+@click.option("--status", type=click.Choice(['available', 'unavailable']), required=True, 
+              help="Set your availability status")
+@require_user_type([UserType.DRIVER.value])
+def availability(status):
+    """Set your availability to accept ride requests."""
+    token = get_token()
+    
+    if not token:
+        click.echo("You are not signed in. Please sign in first.", err=True)
+        return
+    
+    try:
+        is_available = (status == 'available')
+        AuthService.set_driver_availability(token, is_available)
+        click.echo(f"You are now {'available' if is_available else 'unavailable'} for ride requests.")
+    except AuthError as e:
+        click.echo(f"Error setting availability: {str(e)}", err=True)
+
+
+@cli.group()
+def admin():
+    """Admin specific commands."""
+    pass
+
+
+@admin.command()
+@click.argument('user_id')
+@click.option("--verify/--unverify", required=True, help="Verify or unverify a driver")
+@require_user_type([UserType.ADMIN.value])
+def verify_driver(user_id, verify):
+    """Verify or unverify a driver."""
+    token = get_token()
+    
+    if not token:
+        click.echo("You are not signed in. Please sign in first.", err=True)
+        return
+    
+    try:
+        # Get the driver
+        response = requests.get(f"http://localhost:3000/users/{user_id}")
+        
+        if response.status_code == 404:
+            click.echo(f"No user found with ID {user_id}", err=True)
+            return
+            
+        response.raise_for_status()
+        user = response.json()
+        
+        # Check if user is a driver
+        if user.get('user_type') != UserType.DRIVER.value:
+            click.echo("The specified user is not a driver.", err=True)
+            return
+        
+        # Update verification status
+        user['is_verified'] = verify
+        user['updated_at'] = datetime.now().isoformat()
+        
+        # Save the updated user
+        response = requests.put(f"http://localhost:3000/users/{user_id}", json=user)
+        response.raise_for_status()
+        
+        click.echo(f"Driver {user['first_name']} {user['last_name']} has been {'verified' if verify else 'unverified'}.")
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
 
 
 @cli.command()

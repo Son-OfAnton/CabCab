@@ -23,10 +23,10 @@ You can run the application using the provided scripts:
 
 ```bash
 # For main CLI commands
-./cabcab
+cabcab
 
 # For server management
-./cabcab-server
+cabcab-server
 ```
 
 ## Server Setup
@@ -37,16 +37,16 @@ CabCab uses a custom JSON server for data storage and retrieval.
 
 ```bash
 # Start the JSON server
-./cabcab-server start
+cabcab-server start
 
 # Check server status
-./cabcab-server status
+cabcab-server status
 
 # Stop the server
-./cabcab-server stop
+cabcab-server stop
 
 # Reset the database
-./cabcab-server reset
+cabcab-server reset
 ```
 
 ### Direct server execution
@@ -65,17 +65,24 @@ python test_server.py
 Register a new user account:
 
 ```bash
-./cabcab auth signup
+# Register as a passenger
+cabcab auth register passenger
+
+# Register as a driver
+cabcab auth register driver
+
+# Register as an admin (requires authorization code)
+cabcab auth register admin
 ```
 
-You will be prompted for your email, password, first name, last name, and phone number.
+You will be prompted for your details such as email, password, name, phone number, and additional fields depending on the user type.
 
 ### Signin
 
 Log in to your existing account:
 
 ```bash
-./cabcab auth signin
+cabcab auth signin
 ```
 
 You will be prompted for your email and password.
@@ -85,7 +92,7 @@ You will be prompted for your email and password.
 View your current user information:
 
 ```bash
-./cabcab auth whoami
+cabcab auth whoami
 ```
 
 ### Signout
@@ -93,7 +100,46 @@ View your current user information:
 Sign out from your account:
 
 ```bash
-./cabcab auth signout
+cabcab auth signout
+```
+
+### Update Profile
+
+Update your profile information:
+
+```bash
+cabcab auth profile update --first-name "New Name" --last-name "New Last Name" --phone "1234567890"
+```
+
+### Change Password
+
+Change your password:
+
+```bash
+cabcab auth profile change-password
+```
+
+You will be prompted for your current and new passwords.
+
+## Driver Commands
+
+### Set Availability
+
+Set your availability to accept ride requests:
+
+```bash
+cabcab driver availability --status available
+```
+
+## Admin Commands
+
+### Verify Driver
+
+Verify or unverify a driver:
+
+```bash
+cabcab admin verify-driver <user_id> --verify
+cabcab admin verify-driver <user_id> --unverify
 ```
 
 ## Usage
@@ -101,8 +147,7 @@ Sign out from your account:
 After authentication, you can use the CLI application:
 
 ```bash
-./cabcab run hello
-./cabcab run hello --option value
+cabcab run <command> --option value
 ```
 
 ## API Endpoints
@@ -118,6 +163,7 @@ The following endpoints are available in the custom JSON server:
 - `GET /<collection>/query?param=value`: Query items by parameters
 
 Collections available:
+
 - users
 - drivers
 - vehicles
@@ -137,6 +183,40 @@ pytest
 
 If you encounter issues with the server:
 
-1. Check if there's already a server running with `./cabcab-server status`
+1. Check if there's already a server running with `cabcab-server status`
 2. If the server.pid file exists but the server isn't running, delete the file
 3. Check the server logs for error messages
+
+## Project Structure
+
+Below is the project structure:
+
+```
+CabCab/
+├── app/
+│   ├── __init__.py
+│   ├── cli.py
+│   ├── main.py
+│   ├── auth/
+│   │   ├── __init__.py
+│   │   ├── auth_service.py
+│   │   └── user_type.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── user.py
+│   │   ├── driver.py
+│   │   └── ride.py
+│   └── utils/
+│       ├── __init__.py
+│       ├── helpers.py
+│       └── validators.py
+├── tests/
+│   ├── test_auth.py
+│   ├── test_cli.py
+│   └── test_server.py
+├── cabcab
+├── cabcab-server
+├── requirements.txt
+├── README.md
+└── test_server.py
+```

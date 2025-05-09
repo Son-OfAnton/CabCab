@@ -4,8 +4,8 @@ from datetime import datetime
 import os
 import click
 
-from app.auth.auth_service import AuthService, AuthError, UserType
-from app.cli.utils import save_token, get_token
+from app.services.auth_service import AuthService, AuthError, UserType
+from app.cli_module.utils import save_token, get_token
 
 
 @click.group(name="auth")

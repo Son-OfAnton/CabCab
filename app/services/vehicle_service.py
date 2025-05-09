@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional, List
 from uuid import UUID, uuid4
 
 from app.models.vehicle import Vehicle, VehicleType
-from app.auth.auth_service import AuthService, AuthError, UserType
+from app.services.auth_service import AuthService, AuthError, UserType
 
 # Base URL for our custom JSON server
 BASE_URL = "http://localhost:3000"

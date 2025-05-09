@@ -2,8 +2,8 @@
 
 import click
 
-from app.auth.auth_service import AuthService, AuthError, UserType
-from app.cli.utils import get_token, require_user_type
+from app.services.auth_service import AuthService, AuthError, UserType
+from app.cli_module.utils import get_token, require_user_type
 
 
 @click.group(name="driver")

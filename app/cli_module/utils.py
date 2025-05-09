@@ -5,7 +5,7 @@ import json
 from typing import Optional, List
 
 import click
-from app.auth.auth_service import AuthService, AuthError
+from app.services.auth_service import AuthService, AuthError
 
 # Config file to store auth token
 CONFIG_DIR = os.path.expanduser("~/.cabcab")

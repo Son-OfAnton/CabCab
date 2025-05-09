@@ -4,8 +4,8 @@ import click
 from typing import Dict, Any
 
 from app.services.vehicle_service import VehicleService, VehicleServiceError
-from app.auth.auth_service import AuthError, UserType
-from app.cli.utils import get_token, require_user_type
+from app.services.auth_service import AuthError, UserType
+from app.cli_module.utils import get_token, require_user_type
 
 
 @click.group(name="vehicle")

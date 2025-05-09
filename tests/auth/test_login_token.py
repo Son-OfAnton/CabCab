@@ -6,7 +6,7 @@ import json
 import jwt
 from datetime import datetime, timedelta
 
-from app.auth.auth_service import AuthService, AuthError, UserType
+from app.services.auth_service import AuthService, AuthError, UserType
 
 
 class TestLoginAndToken(unittest.TestCase):

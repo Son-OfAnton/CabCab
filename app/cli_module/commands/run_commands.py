@@ -3,7 +3,7 @@
 import click
 
 from app.main import process_command
-from app.cli.utils import is_authenticated
+from app.cli_module.utils import is_authenticated
 
 
 @click.command(name="run")

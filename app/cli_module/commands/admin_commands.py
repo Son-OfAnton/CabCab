@@ -4,8 +4,8 @@ from datetime import datetime
 import click
 import requests
 
-from app.auth.auth_service import UserType
-from app.cli.utils import get_token, require_user_type
+from app.services.auth_service import UserType
+from app.cli_module.utils import get_token, require_user_type
 
 
 @click.group(name="admin")

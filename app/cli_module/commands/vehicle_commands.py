@@ -14,14 +14,15 @@ def vehicle_group():
     pass
 
 
-@vehicle_group.command()
+@vehicle_group.command(name="register", help="Register a new vehicle with details like make, model, year, and more.")
 @click.option("--make", prompt=True, help="Vehicle manufacturer")
 @click.option("--model", prompt=True, help="Vehicle model")
 @click.option("--year", prompt=True, type=int, help="Vehicle year")
 @click.option("--color", prompt=True, help="Vehicle color")
 @click.option("--license-plate", prompt=True, help="Vehicle license plate number")
-@click.option("--type", "vehicle_type", prompt=True, 
-              type=click.Choice(['ECONOMY', 'COMFORT', 'PREMIUM', 'SUV', 'XL'], case_sensitive=False),
+@click.option("--type", "vehicle_type", prompt=True,
+              type=click.Choice(
+                  ['ECONOMY', 'COMFORT', 'PREMIUM', 'SUV', 'XL'], case_sensitive=False),
               help="Vehicle type")
 @click.option("--capacity", prompt=True, type=int, default=4,
               help="Maximum passenger capacity (default: 4)")
@@ -29,16 +30,16 @@ def vehicle_group():
 def register(make, model, year, color, license_plate, vehicle_type, capacity):
     """Register a new vehicle."""
     token = get_token()
-    
+
     if not token:
         click.echo("You are not signed in. Please sign in first.", err=True)
         return
-    
+
     try:
         vehicle = VehicleService.register_vehicle(
             token, make, model, year, color, license_plate, vehicle_type, capacity
         )
-        
+
         click.echo(f"Vehicle registered successfully!")
         click.echo(f"Make: {vehicle['make']}")
         click.echo(f"Model: {vehicle['model']}")
@@ -47,30 +48,30 @@ def register(make, model, year, color, license_plate, vehicle_type, capacity):
         click.echo(f"Type: {vehicle['vehicle_type']}")
         click.echo(f"Capacity: {vehicle['capacity']} passengers")
         click.echo(f"Vehicle ID: {vehicle['id']}")
-        
+
     except (VehicleServiceError, AuthError) as e:
         click.echo(f"Error: {str(e)}", err=True)
 
 
-@vehicle_group.command()
+@vehicle_group.command(name="list", help="List all vehicles registered by the current driver.")
 @require_user_type([UserType.DRIVER.value])
 def list():
     """List all your vehicles."""
     token = get_token()
-    
+
     if not token:
         click.echo("You are not signed in. Please sign in first.", err=True)
         return
-    
+
     try:
         vehicles = VehicleService.get_driver_vehicles(token)
-        
+
         if not vehicles:
             click.echo("You have no registered vehicles.")
             return
-        
+
         click.echo(f"You have {len(vehicles)} registered vehicle(s):")
-        
+
         for i, vehicle in enumerate(vehicles, 1):
             click.echo(f"\nVehicle {i}:")
             click.echo(f"  ID: {vehicle['id']}")
@@ -81,20 +82,21 @@ def list():
             click.echo(f"  License Plate: {vehicle['license_plate']}")
             click.echo(f"  Type: {vehicle['vehicle_type']}")
             click.echo(f"  Capacity: {vehicle['capacity']} passengers")
-            
+
     except (VehicleServiceError, AuthError) as e:
         click.echo(f"Error: {str(e)}", err=True)
 
 
-@vehicle_group.command()
-@click.argument("vehicle_id")
+@vehicle_group.command(name="update", help="Update details of a specific vehicle by its ID.")
+@click.argument("vehicle_id", metavar="VEHICLE_ID")
 @click.option("--make", help="Update vehicle manufacturer")
 @click.option("--model", help="Update vehicle model")
 @click.option("--year", type=int, help="Update vehicle year")
 @click.option("--color", help="Update vehicle color")
 @click.option("--license-plate", help="Update vehicle license plate")
-@click.option("--type", "vehicle_type", 
-              type=click.Choice(['ECONOMY', 'COMFORT', 'PREMIUM', 'SUV', 'XL'], case_sensitive=False),
+@click.option("--type", "vehicle_type",
+              type=click.Choice(
+                  ['ECONOMY', 'COMFORT', 'PREMIUM', 'SUV', 'XL'], case_sensitive=False),
               help="Update vehicle type")
 @click.option("--capacity", type=int, help="Update maximum passenger capacity")
 @click.option("--active/--inactive", default=None, help="Set vehicle active status")
@@ -102,11 +104,11 @@ def list():
 def update(vehicle_id, make, model, year, color, license_plate, vehicle_type, capacity, active):
     """Update vehicle information."""
     token = get_token()
-    
+
     if not token:
         click.echo("You are not signed in. Please sign in first.", err=True)
         return
-    
+
     # Collect update data
     update_data = {}
     if make:
@@ -127,13 +129,15 @@ def update(vehicle_id, make, model, year, color, license_plate, vehicle_type, ca
         update_data['is_active'] = active
 
     if not update_data:
-        click.echo("No update information provided. Use the options to specify what to update.")
+        click.echo(
+            "No update information provided. Use the options to specify what to update.")
         click.echo("Example: cabcab vehicle update abc123 --color \"Blue\"")
         return
-    
+
     try:
-        updated_vehicle = VehicleService.update_vehicle(token, vehicle_id, update_data)
-        
+        updated_vehicle = VehicleService.update_vehicle(
+            token, vehicle_id, update_data)
+
         click.echo("Vehicle updated successfully!")
         click.echo(f"Make: {updated_vehicle['make']}")
         click.echo(f"Model: {updated_vehicle['model']}")
@@ -142,42 +146,44 @@ def update(vehicle_id, make, model, year, color, license_plate, vehicle_type, ca
         click.echo(f"License Plate: {updated_vehicle['license_plate']}")
         click.echo(f"Type: {updated_vehicle['vehicle_type']}")
         click.echo(f"Capacity: {updated_vehicle['capacity']} passengers")
-        click.echo(f"Status: {'Active' if updated_vehicle['is_active'] else 'Inactive'}")
-        
+        click.echo(
+            f"Status: {'Active' if updated_vehicle['is_active'] else 'Inactive'}")
+
     except (VehicleServiceError, AuthError) as e:
         click.echo(f"Error: {str(e)}", err=True)
 
 
-@vehicle_group.command()
-@click.argument("vehicle_id")
+@vehicle_group.command(name="delete", help="Delete a specific vehicle by its ID.")
+@click.argument("vehicle_id", metavar="VEHICLE_ID")
 @click.option("--confirm", is_flag=True, help="Confirm deletion without prompting")
 @require_user_type([UserType.DRIVER.value])
 def delete(vehicle_id, confirm):
     """Delete a vehicle."""
     token = get_token()
-    
+
     if not token:
         click.echo("You are not signed in. Please sign in first.", err=True)
         return
-    
+
     try:
         # First get the vehicle to show details before deleting
         vehicle = VehicleService.get_vehicle_by_id(vehicle_id)
-        
-        click.echo(f"Vehicle: {vehicle['make']} {vehicle['model']} ({vehicle['year']})")
+
+        click.echo(
+            f"Vehicle: {vehicle['make']} {vehicle['model']} ({vehicle['year']})")
         click.echo(f"License Plate: {vehicle['license_plate']}")
-        
+
         # Confirm deletion
         if not confirm and not click.confirm("Are you sure you want to delete this vehicle?"):
             click.echo("Vehicle deletion cancelled.")
             return
-        
+
         success = VehicleService.delete_vehicle(token, vehicle_id)
-        
+
         if success:
             click.echo("Vehicle deleted successfully.")
         else:
             click.echo("Failed to delete vehicle.", err=True)
-            
+
     except (VehicleServiceError, AuthError) as e:
         click.echo(f"Error: {str(e)}", err=True)

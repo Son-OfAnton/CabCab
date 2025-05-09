@@ -2,8 +2,14 @@
 
 import click
 
-# Import the CLI components - we need to avoid putting these in a separate module
-# to prevent import errors with setuptools entry_points
+# Set context settings to properly display help for all commands
+CONTEXT_SETTINGS = {
+    "help_option_names": ["-h", "--help"],
+    "max_content_width": 120,
+    "show_default": True
+}
+
+# Import the CLI components directly from each module
 from app.cli_module.commands.auth_commands import auth_group
 from app.cli_module.commands.driver_commands import driver_group
 from app.cli_module.commands.admin_commands import admin_group
@@ -11,9 +17,9 @@ from app.cli_module.commands.vehicle_commands import vehicle_group
 from app.cli_module.commands.run_commands import run_command
 
 
-@click.group()
+@click.group(context_settings=CONTEXT_SETTINGS)
 def cli():
-    """CabCab CLI application."""
+    """CabCab CLI application for ride-hailing services."""
     pass
 
 

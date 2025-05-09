@@ -4,7 +4,6 @@ aiosignal==1.3.2
 attrs==25.3.0
 bcrypt==4.3.0
 blinker==1.9.0
--e git+https://github.com/Son-OfAnton/CabCab.git@1e82156c039986c4193a70751adf24d01b439aec#egg=cabcab
 certifi==2025.4.26
 charset-normalizer==3.4.2
 click==8.1.8

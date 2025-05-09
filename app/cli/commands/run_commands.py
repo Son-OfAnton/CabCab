@@ -1,0 +1,20 @@
+"""Run command for executing arbitrary CabCab commands."""
+
+import click
+
+from app.main import process_command
+from app.cli.utils import is_authenticated
+
+
+@click.command(name="run")
+@click.argument('command', required=True)
+@click.option('--option', '-o', help='Optional parameter.')
+def run_command(command, option):
+    """Execute a CabCab command."""
+    # Check if authenticated (except for help/version commands)
+    if command not in ['help', 'version'] and not is_authenticated():
+        click.echo("You need to sign in first. Use 'cabcab auth signin' to log in.", err=True)
+        return
+    
+    result = process_command(command, option)
+    click.echo(result)

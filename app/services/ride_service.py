@@ -134,6 +134,58 @@ class RideService:
             
         except requests.RequestException as e:
             raise RideServiceError(f"Ride request creation failed: {str(e)}")
+
+    @staticmethod
+    def accept_ride(token: str, ride_id: str) -> Dict[str, Any]:
+        """
+        Accept a ride request as a driver.
+        
+        Args:
+            token: JWT token for authentication
+            ride_id: ID of the ride to accept
+            
+        Returns:
+            Dict: Updated ride data
+            
+        Raises:
+            RideServiceError: If ride acceptance fails
+            AuthError: If authentication fails
+        """
+        try:
+            # Verify token and ensure user is a driver
+            driver = AuthService.require_user_type(token, [UserType.DRIVER.value])
+            
+            # Check if driver is verified and available
+            if not driver.get("is_verified", False):
+                raise RideServiceError("You must be verified to accept ride requests.")
+            
+            if not driver.get("is_available", False):
+                raise RideServiceError("You must set your status to available before accepting rides.")
+                
+            # Get the ride
+            ride = RideService.get_ride_by_id(ride_id, include_locations=False)
+            
+            # Check if ride can be accepted
+            if ride.get("status") != RideStatus.REQUESTED.name:
+                raise RideServiceError(f"Cannot accept ride with status {ride.get('status')}.")
+            
+            if ride.get("driver_id"):
+                raise RideServiceError("This ride has already been accepted by another driver.")
+            
+            # Update ride with driver info
+            ride["driver_id"] = driver["id"]
+            ride["status"] = RideStatus.DRIVER_ASSIGNED.name
+            
+            # Save updated ride
+            response = requests.put(f"{BASE_URL}/rides/{ride_id}", json=ride)
+            response.raise_for_status()
+            updated_ride = response.json()
+            
+            # Get location info for the response
+            return RideService.get_ride_by_id(ride_id)
+            
+        except requests.RequestException as e:
+            raise RideServiceError(f"Failed to accept ride: {str(e)}")
     
     @staticmethod
     def get_ride_by_id(ride_id: str, include_locations: bool = True) -> Dict[str, Any]:
@@ -222,6 +274,101 @@ class RideService:
             
         except requests.RequestException as e:
             raise RideServiceError(f"Failed to retrieve rides: {str(e)}")
+            
+    @staticmethod
+    def get_driver_rides(token: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get all rides assigned to a driver.
+        
+        Args:
+            token: JWT token for authentication
+            status: Optional filter by ride status
+            
+        Returns:
+            List[Dict]: List of ride data
+            
+        Raises:
+            RideServiceError: If ride retrieval fails
+            AuthError: If authentication fails
+        """
+        try:
+            # Verify token and ensure user is a driver
+            driver = AuthService.require_user_type(token, [UserType.DRIVER.value])
+            
+            # Get all rides for this driver
+            if status:
+                response = requests.get(f"{BASE_URL}/rides/query?driver_id={driver['id']}&status={status}")
+            else:
+                response = requests.get(f"{BASE_URL}/rides/query?driver_id={driver['id']}")
+            
+            if response.status_code == 404:
+                # No rides found, return empty list
+                return []
+                
+            response.raise_for_status()
+            
+            # Sort rides by request time, most recent first
+            rides = response.json()
+            rides.sort(key=lambda r: r.get('request_time', ""), reverse=True)
+            
+            return rides
+            
+        except requests.RequestException as e:
+            raise RideServiceError(f"Failed to retrieve rides: {str(e)}")
+    
+    @staticmethod
+    def get_available_rides(token: str) -> List[Dict[str, Any]]:
+        """
+        Get all available ride requests that a driver can accept.
+        
+        Args:
+            token: JWT token for authentication
+            
+        Returns:
+            List[Dict]: List of available ride data with location details
+            
+        Raises:
+            RideServiceError: If ride retrieval fails
+            AuthError: If authentication fails
+        """
+        try:
+            # Verify token and ensure user is a driver
+            driver = AuthService.require_user_type(token, [UserType.DRIVER.value])
+            
+            # Check if driver is verified and available
+            if not driver.get("is_verified", False):
+                raise RideServiceError("You must be verified to see available rides.")
+            
+            if not driver.get("is_available", False):
+                raise RideServiceError("You must set your status to available to see ride requests.")
+            
+            # Get all rides with status REQUESTED
+            response = requests.get(f"{BASE_URL}/rides/query?status={RideStatus.REQUESTED.name}")
+            
+            if response.status_code == 404:
+                # No rides found, return empty list
+                return []
+                
+            response.raise_for_status()
+            rides = response.json()
+            
+            # Sort rides by request time, oldest first (FIFO for fairness)
+            rides.sort(key=lambda r: r.get('request_time', ""))
+            
+            # Add location details for each ride
+            detailed_rides = []
+            for ride in rides:
+                try:
+                    detailed_ride = RideService.get_ride_by_id(ride['id'])
+                    detailed_rides.append(detailed_ride)
+                except RideServiceError:
+                    # Skip rides with missing location info
+                    continue
+            
+            return detailed_rides
+            
+        except requests.RequestException as e:
+            raise RideServiceError(f"Failed to retrieve available rides: {str(e)}")
     
     @staticmethod
     def cancel_ride(token: str, ride_id: str) -> Dict[str, Any]:

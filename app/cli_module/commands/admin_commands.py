@@ -14,16 +14,16 @@ def admin_group():
     pass
 
 
-@admin_group.command(name="verify_driver", help="Verify or unverify a driver account by their user ID.")
-@click.argument('user_id', metavar="USER_ID")
+@admin_group.command(name="verify_driver", help="Verify or unverify a driver account by email.")
+@click.argument('email', metavar="EMAIL")
 @click.option("--verify/--unverify", required=True,
               help="Set to --verify to verify the driver or --unverify to remove verification")
 @require_user_type([UserType.ADMIN.value])
-def verify_driver(user_id, verify):
+def verify_driver(email, verify):
     """
     Verify or unverify a driver's account.
 
-    USER_ID: The ID of the driver to verify or unverify.
+    EMAIL: The email address of the driver to verify or unverify.
     """
     token = get_token()
 
@@ -32,19 +32,26 @@ def verify_driver(user_id, verify):
         return
 
     try:
-        # Get the driver
-        response = requests.get(f"http://localhost:3000/users/{user_id}")
-
+        # Find the user by email
+        response = requests.get(f"http://localhost:3000/users/query?email={email}")
+        
         if response.status_code == 404:
-            click.echo(f"No user found with ID {user_id}", err=True)
+            click.echo(f"No user found with email {email}", err=True)
             return
 
         response.raise_for_status()
-        user = response.json()
-
+        users = response.json()
+        
+        if not users:
+            click.echo(f"No user found with email {email}", err=True)
+            return
+            
+        # Get the first user with the specified email
+        user = users[0]
+        
         # Check if user is a driver
         if user.get('user_type') != UserType.DRIVER.value:
-            click.echo("The specified user is not a driver.", err=True)
+            click.echo(f"User with email {email} is not a driver.", err=True)
             return
 
         # Update verification status
@@ -53,10 +60,11 @@ def verify_driver(user_id, verify):
 
         # Save the updated user
         response = requests.put(
-            f"http://localhost:3000/users/{user_id}", json=user)
+            f"http://localhost:3000/users/{user['id']}", json=user)
         response.raise_for_status()
 
+        verification_status = 'verified' if verify else 'unverified'
         click.echo(
-            f"Driver {user['first_name']} {user['last_name']} has been {'verified' if verify else 'unverified'}.")
+            f"Driver {user['first_name']} {user['last_name']} ({email}) has been {verification_status}.")
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)

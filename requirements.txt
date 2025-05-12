@@ -4,6 +4,7 @@ aiosignal==1.3.2
 attrs==25.3.0
 bcrypt==4.3.0
 blinker==1.9.0
+-e git+https://github.com/Son-OfAnton/CabCab.git@d96b9e259936edb4ec094ec374ecb10c898a8eca#egg=cabcab
 certifi==2025.4.26
 charset-normalizer==3.4.2
 click==8.1.8
@@ -18,17 +19,22 @@ itsdangerous==2.2.0
 Jinja2==3.1.6
 json-server==0.1.3
 json-server-py==0.1.11
+markdown-it-py==3.0.0
 MarkupSafe==3.0.2
+mdurl==0.1.2
 multidict==6.4.3
 packaging==25.0
 pluggy==1.5.0
 propcache==0.3.1
+Pygments==2.19.1
 PyJWT==2.10.1
 pytest==8.3.5
 python-dotenv==1.1.0
 requests==2.32.3
+rich==14.0.0
 setuptools==80.3.1
 simplejson==3.20.1
+tabulate==0.9.0
 urllib3==2.4.0
 Werkzeug==3.1.3
 yarl==1.20.0

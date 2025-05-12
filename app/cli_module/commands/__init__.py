@@ -4,6 +4,7 @@ from app.cli_module.commands.auth_commands import auth_group
 from app.cli_module.commands.driver_commands import driver_group
 from app.cli_module.commands.admin_commands import admin_group
 from app.cli_module.commands.vehicle_commands import vehicle_group
+from app.cli_module.commands.ride_commands import ride_group
 from app.cli_module.commands.run_commands import run_command
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     'driver_group',
     'admin_group',
     'vehicle_group',
+    'ride_group',
     'run_command',
 ]

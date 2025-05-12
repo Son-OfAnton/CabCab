@@ -2,8 +2,8 @@
 
 import click
 import requests
-from tabulate import tabulate
 from datetime import datetime
+from tabulate import tabulate
 
 from app.services.auth_service import AuthService, AuthError, UserType
 from app.services.ride_service import RideService, RideServiceError
@@ -37,11 +37,10 @@ def availability(status):
         click.echo(f"Error setting availability: {str(e)}", err=True)
 
 
-@driver_group.command(name="rides", help="List your assigned rides.")
-@click.option("--status", help="Filter rides by status (e.g., DRIVER_ASSIGNED, IN_PROGRESS, COMPLETED)")
+@driver_group.command(name="rides", help="View available ride requests.")
 @require_user_type([UserType.DRIVER.value])
-def list_rides(status):
-    """List rides assigned to you."""
+def available_rides():
+    """View available ride requests that you can accept."""
     token = get_token()
 
     if not token:
@@ -49,11 +48,12 @@ def list_rides(status):
         return
 
     try:
-        rides = RideService.get_driver_rides(token, status)
+        # Get all available ride requests
+        rides = RideService.get_available_rides(token)
 
         if not rides:
-            filter_text = f" with status '{status}'" if status else ""
-            click.echo(f"You have no rides{filter_text}.")
+            click.echo("There are no available ride requests at this time.")
+            click.echo("Check back later or ensure you are set as available.")
             return
 
         # Prepare data for table
@@ -67,33 +67,65 @@ def list_rides(status):
                     request_time = dt.strftime('%Y-%m-%d %H:%M')
                 except (ValueError, TypeError):
                     request_time = ride['request_time']
-                    
+
+            # Format pickup and dropoff locations for display
+            pickup = ride.get('pickup_location', {})
+            dropoff = ride.get('dropoff_location', {})
+            
+            # Extract city or address information for display
+            pickup_display = pickup.get('city', 'Unknown')
+            if not pickup_display or pickup_display == 'Unknown City':
+                # If city is not available, use the address or part of it
+                address = pickup.get('address', '')
+                if address:
+                    # Use just the first part of the address to keep it short
+                    pickup_display = address.split(',')[0] if ',' in address else address
+            
+            dropoff_display = dropoff.get('city', 'Unknown')
+            if not dropoff_display or dropoff_display == 'Unknown City':
+                address = dropoff.get('address', '')
+                if address:
+                    dropoff_display = address.split(',')[0] if ',' in address else address
+            
+            # Format the route (pickup -> dropoff)
+            route = f"{pickup_display} → {dropoff_display}"
+            
+            # Get passenger details
+            passenger = ride.get('passenger', {})
+            passenger_name = f"{passenger.get('first_name', '')} {passenger.get('last_name', '')}"
+            passenger_rating = passenger.get('rating', 'N/A')
+                   
             table_data.append([
                 ride.get('id'),
-                ride.get('status'),
                 request_time,
+                route,
+                passenger_name,
+                passenger_rating if passenger_rating else 'N/A',
                 f"${ride.get('estimated_fare')}",
                 f"{ride.get('distance')} km",
                 f"{ride.get('duration')} min"
             ])
 
+        # Print available rides
+        click.echo("\n🚖 Available Ride Requests:\n")
         click.echo(tabulate(
             table_data,
-            headers=["Ride ID", "Status", "Requested", "Fare", "Distance", "Duration"],
-            tablefmt="pretty"
+            headers=["Ride ID", "Requested", "Route", "Passenger", "Rating", "Est. Fare", "Distance", "Duration"],
+            tablefmt="grid"
         ))
         
-        click.echo("\nUse 'cabcab driver ride-status <ride_id>' to view details of a specific ride.")
+        click.echo("\nTo view details of a specific ride: cabcab driver ride-details <ride_id>")
+        click.echo("To accept a ride: cabcab driver accept <ride_id>")
 
     except (RideServiceError, AuthError) as e:
         click.echo(f"Error: {str(e)}", err=True)
 
 
-@driver_group.command(name="ride-status", help="Check the status and details of a ride assigned to you.")
-@click.argument("ride_id", required=True)
+@driver_group.command(name="ride-details", help="View detailed information about a specific ride request.")
+@click.argument('ride_id', required=True)
 @require_user_type([UserType.DRIVER.value])
-def ride_status(ride_id):
-    """Check details of a ride assigned to you."""
+def ride_details(ride_id):
+    """View detailed information about a specific ride request."""
     token = get_token()
 
     if not token:
@@ -101,13 +133,8 @@ def ride_status(ride_id):
         return
 
     try:
+        # Get ride details
         ride = RideService.get_ride_by_id(ride_id)
-        
-        # Verify this ride is assigned to the driver
-        driver = AuthService.verify_token(token)
-        if ride.get('driver_id') != driver['id']:
-            click.echo(f"This ride is not assigned to you.", err=True)
-            return
         
         # Format request time
         request_time = None
@@ -118,29 +145,95 @@ def ride_status(ride_id):
             except (ValueError, TypeError):
                 request_time = ride['request_time']
                 
-        # Get passenger info if available
-        passenger_name = "Unknown"
-        try:
-            passenger_response = requests.get(f"http://localhost:3000/users/{ride['user_id']}")
-            if passenger_response.status_code == 200:
-                passenger = passenger_response.json()
-                passenger_name = f"{passenger.get('first_name', '')} {passenger.get('last_name', '')}".strip()
-        except:
-            pass
-
+        # Display ride details
         click.echo(f"\n🚖 Ride Details (ID: {ride['id']})\n")
         click.echo(f"Status: {ride['status']}")
         click.echo(f"Requested: {request_time}")
-        click.echo(f"Passenger: {passenger_name}")
         
         # Display pickup and dropoff details
         pickup = ride.get('pickup_location', {})
         dropoff = ride.get('dropoff_location', {})
         
         # Format full addresses for display
-        pickup_address = f"{pickup.get('address')}, {pickup.get('city')}, {pickup.get('state')} {pickup.get('postal_code')}"
-        dropoff_address = f"{dropoff.get('address')}, {dropoff.get('city')}, {dropoff.get('state')} {dropoff.get('postal_code')}"
+        pickup_address = f"{pickup.get('address', '')}, {pickup.get('city', '')}, {pickup.get('state', '')} {pickup.get('postal_code', '')}"
+        dropoff_address = f"{dropoff.get('address', '')}, {dropoff.get('city', '')}, {dropoff.get('state', '')} {dropoff.get('postal_code', '')}"
         
+        click.echo("\n📍 Pickup Location:")
+        click.echo(f"   {pickup_address}")
+        
+        click.echo("\n🏁 Dropoff Location:")
+        click.echo(f"   {dropoff_address}")
+        
+        # Get passenger details (from ride['passenger'] or separate API call)
+        try:
+            passenger = ride.get('passenger', {})
+            if not passenger and ride.get('user_id'):
+                response = requests.get(f"http://localhost:3000/users/{ride['user_id']}")
+                if response.status_code == 200:
+                    passenger = response.json()
+            
+            if passenger:
+                click.echo("\n👤 Passenger Information:")
+                click.echo(f"   Name: {passenger.get('first_name', '')} {passenger.get('last_name', '')}")
+                if passenger.get('rating'):
+                    click.echo(f"   Rating: {passenger.get('rating')}")
+        except Exception:
+            # Skip passenger details if not available
+            pass
+        
+        # Display ride estimates
+        click.echo("\n📊 Ride Information:")
+        click.echo(f"   Distance: {ride.get('distance')} km")
+        click.echo(f"   Duration: {ride.get('duration')} minutes")
+        click.echo(f"   Estimated Fare: ${ride.get('estimated_fare')}")
+        
+        # Show available actions
+        if ride.get('status') == "REQUESTED":
+            click.echo("\n✅ You can accept this ride with: cabcab driver accept " + ride_id)
+        
+    except (RideServiceError, AuthError) as e:
+        click.echo(f"Error: {str(e)}", err=True)
+
+
+@driver_group.command(name="accept", help="Accept a ride request.")
+@click.argument('ride_id', required=True)
+@require_user_type([UserType.DRIVER.value])
+def accept_ride(ride_id):
+    """Accept a ride request with the given ID."""
+    token = get_token()
+
+    if not token:
+        click.echo("You are not signed in. Please sign in first.", err=True)
+        return
+
+    try:
+        # Accept the ride
+        ride = RideService.accept_ride(token, ride_id)
+
+        # Get passenger details
+        try:
+            response = requests.get(f"http://localhost:3000/users/{ride['user_id']}")
+            response.raise_for_status()
+            passenger = response.json()
+            passenger_name = f"{passenger.get('first_name', '')} {passenger.get('last_name', '')}"
+        except Exception:
+            passenger_name = "Unknown Passenger"
+
+        # Format pickup and dropoff locations for display
+        pickup = ride.get('pickup_location', {})
+        dropoff = ride.get('dropoff_location', {})
+        
+        pickup_address = f"{pickup.get('address')}, {pickup.get('city')}, {pickup.get('state')}"
+        dropoff_address = f"{dropoff.get('address')}, {dropoff.get('city')}, {dropoff.get('state')}"
+
+        click.echo("\n✅ Ride accepted successfully!\n")
+        click.echo(f"Ride ID: {ride['id']}")
+        click.echo(f"Status: {ride['status']}")
+        
+        # Display passenger info
+        click.echo(f"\n👤 Passenger: {passenger_name}")
+        
+        # Display pickup and dropoff details
         click.echo("\n📍 Pickup Location:")
         click.echo(f"   {pickup_address}")
         
@@ -149,18 +242,23 @@ def ride_status(ride_id):
         
         # Display ride estimates
         click.echo("\n📊 Ride Information:")
-        click.echo(f"   Distance: {ride.get('distance')} km")
-        click.echo(f"   Duration: {ride.get('duration')} minutes")
-        click.echo(f"   Estimated Fare: ${ride.get('estimated_fare')}")
+        click.echo(f"   Distance: {ride['distance']} km")
+        click.echo(f"   Duration: {ride['duration']} minutes")
+        click.echo(f"   Estimated Fare: ${ride['estimated_fare']}")
+        
+        click.echo("\nYou are now unavailable for other ride requests.")
+        click.echo("Use 'cabcab driver cancel <ride_id>' if you need to cancel this ride.")
 
     except (RideServiceError, AuthError) as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"Error accepting ride: {str(e)}", err=True)
 
 
-@driver_group.command(name="available-rides", help="List available ride requests that you can accept.")
+@driver_group.command(name="cancel", help="Cancel an accepted ride.")
+@click.argument('ride_id', required=True)
+@click.option("--confirm", is_flag=True, help="Confirm cancellation without prompting")
 @require_user_type([UserType.DRIVER.value])
-def available_rides():
-    """List available ride requests that you can accept."""
+def cancel_ride(ride_id, confirm):
+    """Cancel a ride you have accepted."""
     token = get_token()
 
     if not token:
@@ -168,98 +266,37 @@ def available_rides():
         return
 
     try:
-        rides = RideService.get_available_rides(token)
+        # Get ride details first
+        ride = RideService.get_ride_by_id(ride_id)
         
-        if not rides:
-            click.echo("There are no ride requests available right now.")
-            click.echo("Check back later or make sure your status is set to 'available'.")
+        # Check if this driver is assigned to the ride
+        user = AuthService.verify_token(token)
+        if ride.get('driver_id') != user['id']:
+            click.echo("You are not the assigned driver for this ride.", err=True)
             return
             
-        click.echo(f"Found {len(rides)} available ride requests:\n")
-        
-        # Prepare data for table
-        table_data = []
-        for i, ride in enumerate(rides, 1):
-            # Get pickup and dropoff details for the location column
-            pickup_city = ride.get('pickup_location', {}).get('city', 'Unknown')
-            dropoff_city = ride.get('dropoff_location', {}).get('city', 'Unknown')
-            locations = f"{pickup_city} → {dropoff_city}"
-            
-            # Parse ISO datetime to more readable format
-            request_time = None
-            if ride.get('request_time'):
-                try:
-                    dt = datetime.fromisoformat(ride['request_time'].replace('Z', '+00:00'))
-                    request_time = dt.strftime('%Y-%m-%d %H:%M')
-                except (ValueError, TypeError):
-                    request_time = ride['request_time']
-            
-            table_data.append([
-                i,
-                ride.get('id'),
-                locations,
-                request_time,
-                f"${ride.get('estimated_fare')}",
-                f"{ride.get('distance')} km",
-                f"{ride.get('duration')} min"
-            ])
-            
-        click.echo(tabulate(
-            table_data,
-            headers=["#", "Ride ID", "Route", "Requested", "Fare", "Distance", "Duration"],
-            tablefmt="pretty"
-        ))
-        
-        click.echo("\nUse 'cabcab driver accept-ride <ride_id>' to accept a ride.")
-
-    except (RideServiceError, AuthError) as e:
-        click.echo(f"Error: {str(e)}", err=True)
-
-
-@driver_group.command(name="accept-ride", help="Accept a ride request.")
-@click.argument("ride_id", required=True)
-@require_user_type([UserType.DRIVER.value])
-def accept_ride(ride_id):
-    """Accept a ride request."""
-    token = get_token()
-
-    if not token:
-        click.echo("You are not signed in. Please sign in first.", err=True)
-        return
-
-    try:
-        ride = RideService.accept_ride(token, ride_id)
-        
-        # Get passenger info if available
-        passenger_name = "Unknown"
-        try:
-            import requests
-            passenger_response = requests.get(f"http://localhost:3000/users/{ride['user_id']}")
-            if passenger_response.status_code == 200:
-                passenger = passenger_response.json()
-                passenger_name = f"{passenger.get('first_name', '')} {passenger.get('last_name', '')}".strip()
-        except:
-            pass
-        
-        click.echo("\n✅ Ride accepted successfully!\n")
-        click.echo(f"Ride ID: {ride['id']}")
-        click.echo(f"Status: {ride['status']}")
-        click.echo(f"Passenger: {passenger_name}")
-        
-        # Display pickup and dropoff details
+        # Format addresses for display
         pickup = ride.get('pickup_location', {})
         dropoff = ride.get('dropoff_location', {})
         
-        # Format addresses for display
-        pickup_address = f"{pickup.get('address')}, {pickup.get('city')}, {pickup.get('state')} {pickup.get('postal_code')}"
+        pickup_address = f"{pickup.get('address')}, {pickup.get('city')}"
+        dropoff_address = f"{dropoff.get('address')}, {dropoff.get('city')}"
         
-        click.echo("\n📍 Pickup Location:")
+        click.echo(f"Cancelling ride from:")
         click.echo(f"   {pickup_address}")
+        click.echo(f"To:")
+        click.echo(f"   {dropoff_address}")
         
-        click.echo(f"\nEstimated fare: ${ride.get('estimated_fare')}")
+        # Confirm cancellation
+        if not confirm and not click.confirm("Are you sure you want to cancel this ride? This may affect your rating."):
+            click.echo("Ride cancellation cancelled.")
+            return
+
+        # Cancel the ride
+        cancelled_ride = RideService.cancel_ride(token, ride_id)
         
-        click.echo("\nHead to the pickup location to meet your passenger.")
-        click.echo("Use 'cabcab driver ride-status " + ride_id + "' to view ride details.")
+        click.echo("\n✅ Ride cancelled.")
+        click.echo("You are now available for new ride requests.")
 
     except (RideServiceError, AuthError) as e:
         click.echo(f"Error: {str(e)}", err=True)

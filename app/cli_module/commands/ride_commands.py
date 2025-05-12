@@ -1,6 +1,7 @@
 """Ride commands for the CabCab CLI."""
 
 import click
+import requests
 from tabulate import tabulate
 from datetime import datetime
 
@@ -232,8 +233,35 @@ def ride_status(ride_id):
         # Display driver information if assigned
         if ride.get('driver_id'):
             click.echo("\n👤 Driver Information:")
-            click.echo(f"   Driver ID: {ride.get('driver_id')}")
-            # In a full implementation, we would fetch and display additional driver details
+            
+            # Fetch detailed driver information
+            try:
+                response = requests.get(f"http://localhost:3000/users/{ride.get('driver_id')}")
+                if response.status_code == 200:
+                    driver = response.json()
+                    click.echo(f"   Name: {driver.get('first_name', '')} {driver.get('last_name', '')}")
+                    click.echo(f"   Phone: {driver.get('phone', 'Not available')}")
+                    click.echo(f"   Rating: {driver.get('rating', 'N/A')}")
+                    
+                    # Try to get vehicle information
+                    vehicle_id = driver.get('vehicle_id')
+                    if vehicle_id:
+                        try:
+                            vehicle_response = requests.get(f"http://localhost:3000/vehicles/{vehicle_id}")
+                            if vehicle_response.status_code == 200:
+                                vehicle = vehicle_response.json()
+                                click.echo(f"   Vehicle: {vehicle.get('make', '')} {vehicle.get('model', '')} ({vehicle.get('color', '')})")
+                                click.echo(f"   License Plate: {vehicle.get('license_plate', 'Not available')}")
+                        except Exception:
+                            click.echo(f"   Vehicle information not available")
+                else:
+                    # Fallback if we can't get driver details
+                    click.echo(f"   Driver ID: {ride.get('driver_id')}")
+                    click.echo(f"   (Detailed driver information not available)")
+            except Exception:
+                # Fallback if API request fails
+                click.echo(f"   Driver ID: {ride.get('driver_id')}")
+                click.echo(f"   (Detailed driver information not available)")
         
         # Show ride actions based on status
         click.echo("\nAvailable Actions:")

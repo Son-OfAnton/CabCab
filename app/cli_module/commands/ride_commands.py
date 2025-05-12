@@ -15,20 +15,11 @@ def ride_group():
     pass
 
 
-@ride_group.command(name="request", help="Request a new ride")
-@click.option("--pickup-address", prompt=True, help="Pickup street address")
-@click.option("--pickup-city", prompt=True, help="Pickup city")
-@click.option("--pickup-state", prompt=True, help="Pickup state/province")
-@click.option("--pickup-postal", prompt=True, help="Pickup postal/zip code")
-@click.option("--pickup-country", prompt=True, default="USA", help="Pickup country")
-@click.option("--dropoff-address", prompt=True, help="Dropoff street address")
-@click.option("--dropoff-city", prompt=True, help="Dropoff city")
-@click.option("--dropoff-state", prompt=True, help="Dropoff state/province")
-@click.option("--dropoff-postal", prompt=True, help="Dropoff postal/zip code")
-@click.option("--dropoff-country", prompt=True, default="USA", help="Dropoff country")
+@ride_group.command(name="request")
+@click.option("--pickup", prompt="Pickup location", help="Full pickup location address")
+@click.option("--dropoff", prompt="Dropoff location", help="Full dropoff location address")
 @require_user_type([UserType.PASSENGER.value])
-def request_ride(pickup_address, pickup_city, pickup_state, pickup_postal, pickup_country,
-                dropoff_address, dropoff_city, dropoff_state, dropoff_postal, dropoff_country):
+def request_ride(pickup, dropoff):
     """Request a new ride with pickup and dropoff locations."""
     token = get_token()
 
@@ -37,10 +28,23 @@ def request_ride(pickup_address, pickup_city, pickup_state, pickup_postal, picku
         return
 
     try:
+        # Parse the location strings
+        # This is simplified - in a real app we'd use geocoding to validate and get components
+        pickup_parts = _parse_location(pickup)
+        dropoff_parts = _parse_location(dropoff)
+        
         ride = RideService.create_ride_request(
             token,
-            pickup_address, pickup_city, pickup_state, pickup_postal, pickup_country,
-            dropoff_address, dropoff_city, dropoff_state, dropoff_postal, dropoff_country
+            pickup_parts.get('address', pickup),      # Use full string as address if parsing fails
+            pickup_parts.get('city', 'Unknown City'), 
+            pickup_parts.get('state', 'Unknown State'),
+            pickup_parts.get('postal', '00000'),
+            pickup_parts.get('country', 'USA'),
+            dropoff_parts.get('address', dropoff),    # Use full string as address if parsing fails
+            dropoff_parts.get('city', 'Unknown City'),
+            dropoff_parts.get('state', 'Unknown State'),
+            dropoff_parts.get('postal', '00000'),
+            dropoff_parts.get('country', 'USA')
         )
 
         click.echo("\n🚗 Ride request created successfully! 🚗\n")
@@ -49,12 +53,10 @@ def request_ride(pickup_address, pickup_city, pickup_state, pickup_postal, picku
         
         # Display pickup and dropoff details
         click.echo("\n📍 Pickup Location:")
-        click.echo(f"   {ride['pickup_location']['address']}")
-        click.echo(f"   {ride['pickup_location']['city']}, {ride['pickup_location']['state']} {ride['pickup_location']['postal_code']}")
+        click.echo(f"   {pickup}")
         
         click.echo("\n🏁 Dropoff Location:")
-        click.echo(f"   {ride['dropoff_location']['address']}")
-        click.echo(f"   {ride['dropoff_location']['city']}, {ride['dropoff_location']['state']} {ride['dropoff_location']['postal_code']}")
+        click.echo(f"   {dropoff}")
         
         # Display ride estimates
         click.echo("\n📊 Ride Estimates:")
@@ -63,13 +65,56 @@ def request_ride(pickup_address, pickup_city, pickup_state, pickup_postal, picku
         click.echo(f"   Estimated Fare: ${ride['estimated_fare']}")
         
         click.echo("\nWe're looking for a driver to accept your ride request...")
-        click.echo("Use 'cabcab ride status <ride_id>' to check the status of your ride.")
+        click.echo("Use 'cabcab ride status' to check the status of your ride.")
 
     except (RideServiceError, AuthError) as e:
         click.echo(f"Error: {str(e)}", err=True)
 
 
-@ride_group.command(name="list", help="List your ride history")
+def _parse_location(location_str):
+    """
+    Attempt to parse location string into components.
+    
+    This is a simple parser that tries to extract city, state, postal code
+    from a location string. In a real app, we'd use a geocoding service.
+    
+    Returns a dict with address components.
+    """
+    result = {
+        'address': location_str,
+        'city': 'Unknown City',
+        'state': 'Unknown State',
+        'postal': '00000',
+        'country': 'USA'
+    }
+    
+    # Very basic parsing - just an example
+    parts = location_str.split(',')
+    if len(parts) >= 3:
+        # Format might be like "123 Main St, Boston, MA 02108"
+        result['address'] = parts[0].strip()
+        result['city'] = parts[1].strip()
+        
+        # Try to parse state and zip
+        state_zip = parts[2].strip().split()
+        if len(state_zip) >= 1:
+            result['state'] = state_zip[0]
+        if len(state_zip) >= 2:
+            result['postal'] = state_zip[1]
+            
+    elif len(parts) == 2:
+        # Format might be like "123 Main St, Boston"
+        result['address'] = parts[0].strip()
+        result['city'] = parts[1].strip()
+        
+    # If there's a country specified
+    if len(parts) >= 4:
+        result['country'] = parts[3].strip()
+        
+    return result
+
+
+@ride_group.command(name="list")
 @click.option("--status", help="Filter by ride status")
 @require_user_type([UserType.PASSENGER.value])
 def list_rides(status):
@@ -115,16 +160,21 @@ def list_rides(status):
             tablefmt="pretty"
         ))
         
-        click.echo("\nUse 'cabcab ride status <ride_id>' to view details of a specific ride.")
+        click.echo("\nUse 'cabcab ride status' to view details of your most recent ride.")
+        click.echo("Or 'cabcab ride status <ride_id>' to view details of a specific ride.")
 
     except (RideServiceError, AuthError) as e:
         click.echo(f"Error: {str(e)}", err=True)
 
 
-@ride_group.command(name="status", help="Check the status of a specific ride")
-@click.argument("ride_id", required=True)
+@ride_group.command(name="status")
+@click.argument("ride_id", required=False)
 def ride_status(ride_id):
-    """Check the status and details of a specific ride."""
+    """
+    Check the status and details of a ride.
+    
+    If no ride_id is provided, shows the status of your most recent ride.
+    """
     token = get_token()
 
     if not token:
@@ -132,6 +182,18 @@ def ride_status(ride_id):
         return
 
     try:
+        # If no ride_id is provided, get the most recent ride
+        if not ride_id:
+            rides = RideService.get_user_rides(token)
+            if not rides:
+                click.echo("You have no ride history.")
+                return
+                
+            # Get the most recent ride (already sorted in get_user_rides)
+            most_recent_ride = rides[0]
+            ride_id = most_recent_ride['id']
+            click.echo(f"Showing your most recent ride (ID: {ride_id})")
+        
         ride = RideService.get_ride_by_id(ride_id)
         
         # Format request time
@@ -151,13 +213,15 @@ def ride_status(ride_id):
         pickup = ride.get('pickup_location', {})
         dropoff = ride.get('dropoff_location', {})
         
+        # Format full addresses for display
+        pickup_address = f"{pickup.get('address')}, {pickup.get('city')}, {pickup.get('state')} {pickup.get('postal_code')}"
+        dropoff_address = f"{dropoff.get('address')}, {dropoff.get('city')}, {dropoff.get('state')} {dropoff.get('postal_code')}"
+        
         click.echo("\n📍 Pickup Location:")
-        click.echo(f"   {pickup.get('address')}")
-        click.echo(f"   {pickup.get('city')}, {pickup.get('state')} {pickup.get('postal_code')}")
+        click.echo(f"   {pickup_address}")
         
         click.echo("\n🏁 Dropoff Location:")
-        click.echo(f"   {dropoff.get('address')}")
-        click.echo(f"   {dropoff.get('city')}, {dropoff.get('state')} {dropoff.get('postal_code')}")
+        click.echo(f"   {dropoff_address}")
         
         # Display ride estimates
         click.echo("\n📊 Ride Information:")
@@ -184,10 +248,14 @@ def ride_status(ride_id):
 
 
 @ride_group.command(name="cancel")
-@click.argument("ride_id", required=True)
+@click.argument("ride_id", required=False)
 @click.option("--confirm", is_flag=True, help="Confirm cancellation without prompting")
 def cancel_ride(ride_id, confirm):
-    """Cancel a requested ride."""
+    """
+    Cancel a ride request.
+    
+    If no ride_id is provided, cancels your most recent active ride.
+    """
     token = get_token()
 
     if not token:
@@ -195,15 +263,39 @@ def cancel_ride(ride_id, confirm):
         return
 
     try:
-        # Get ride details first
+        # If no ride_id is provided, get the most recent cancelable ride
+        if not ride_id:
+            rides = RideService.get_user_rides(token)
+            
+            if not rides:
+                click.echo("You have no ride history.")
+                return
+            
+            # Filter for rides that could be cancelled
+            cancelable_rides = [r for r in rides if r.get('status') in ["REQUESTED", "DRIVER_ASSIGNED"]]
+            
+            if not cancelable_rides:
+                click.echo("You have no active rides that can be cancelled.")
+                return
+                
+            # Get the most recent cancelable ride
+            ride_id = cancelable_rides[0]['id']
+            click.echo(f"Cancelling your most recent active ride (ID: {ride_id})")
+        
+        # Get ride details
         ride = RideService.get_ride_by_id(ride_id)
         
-        click.echo(f"Cancelling ride from:")
         pickup = ride.get('pickup_location', {})
         dropoff = ride.get('dropoff_location', {})
-        click.echo(f"   {pickup.get('address')}, {pickup.get('city')}")
+        
+        # Format addresses for display
+        pickup_address = f"{pickup.get('address')}, {pickup.get('city')}"
+        dropoff_address = f"{dropoff.get('address')}, {dropoff.get('city')}"
+        
+        click.echo(f"Cancelling ride from:")
+        click.echo(f"   {pickup_address}")
         click.echo(f"To:")
-        click.echo(f"   {dropoff.get('address')}, {dropoff.get('city')}")
+        click.echo(f"   {dropoff_address}")
         
         # Confirm cancellation
         if not confirm and not click.confirm("Are you sure you want to cancel this ride?"):
@@ -221,15 +313,19 @@ def cancel_ride(ride_id, confirm):
         click.echo(f"Error: {str(e)}", err=True)
 
 
-@ride_group.command(name="rate", help="Rate a completed ride")
-@click.argument("ride_id", required=True)
+@ride_group.command(name="rate")
+@click.argument("ride_id", required=False)
 @click.option("--rating", type=click.IntRange(1, 5), prompt=True, 
               help="Rate your ride (1-5 stars)")
 @click.option("--feedback", prompt="Additional feedback (optional)", 
               default="", help="Additional feedback about your ride")
 @require_user_type([UserType.PASSENGER.value])
 def rate_ride(ride_id, rating, feedback):
-    """Rate a completed ride."""
+    """
+    Rate a completed ride.
+    
+    If no ride_id is provided, rates your most recent completed ride.
+    """
     token = get_token()
 
     if not token:
@@ -237,6 +333,25 @@ def rate_ride(ride_id, rating, feedback):
         return
 
     try:
+        # If no ride_id is provided, get the most recent completed ride
+        if not ride_id:
+            rides = RideService.get_user_rides(token)
+            
+            if not rides:
+                click.echo("You have no ride history.")
+                return
+            
+            # Filter for completed rides that haven't been rated
+            completed_rides = [r for r in rides if r.get('status') == "COMPLETED" and not r.get('rating')]
+            
+            if not completed_rides:
+                click.echo("You have no completed rides that need rating.")
+                return
+                
+            # Get the most recent completed ride
+            ride_id = completed_rides[0]['id']
+            click.echo(f"Rating your most recent completed ride (ID: {ride_id})")
+        
         # This is a placeholder for the full implementation
         # In a complete solution, we would update the ride with the rating
         click.echo("This feature is coming soon!")

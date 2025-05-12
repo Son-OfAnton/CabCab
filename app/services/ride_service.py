@@ -56,10 +56,9 @@ class RideService:
             # Verify token and ensure user is a passenger
             user = AuthService.require_user_type(token, [UserType.PASSENGER.value])
             
-            # Create pickup location
-            # In a real app, we'd use a geocoding service to get lat/lng
-            # For simplicity, we'll use random coordinates
-            pickup_lat, pickup_lng = 40.7128, -74.006  # NYC coordinates
+            # Create pickup location - for a real app, we'd use a geocoding API to get coordinates
+            # Simulating coordinates for the purpose of this implementation
+            pickup_lat, pickup_lng = _generate_coordinates_for_location(pickup_address)
             pickup_location = {
                 "id": str(uuid4()),
                 "latitude": pickup_lat,
@@ -73,8 +72,7 @@ class RideService:
             }
             
             # Create dropoff location
-            # Again, we'd use geocoding in a real app
-            dropoff_lat, dropoff_lng = 40.7128, -73.95  # Somewhere in Brooklyn
+            dropoff_lat, dropoff_lng = _generate_coordinates_for_location(dropoff_address)
             dropoff_location = {
                 "id": str(uuid4()),
                 "latitude": dropoff_lat,
@@ -98,7 +96,7 @@ class RideService:
             saved_dropoff = response.json()
             
             # Calculate ride estimation
-            distance, duration, fare = RideService._calculate_ride_estimation(
+            distance, duration, fare = _calculate_ride_estimation(
                 pickup_lat, pickup_lng, dropoff_lat, dropoff_lng
             )
             
@@ -267,36 +265,63 @@ class RideService:
             
         except requests.RequestException as e:
             raise RideServiceError(f"Failed to cancel ride: {str(e)}")
+
+
+def _generate_coordinates_for_location(address):
+    """
+    Generate simulated coordinates for a location.
     
-    @staticmethod
-    def _calculate_ride_estimation(pickup_lat: float, pickup_lng: float, 
-                                 dropoff_lat: float, dropoff_lng: float) -> Tuple[float, int, float]:
-        """
-        Calculate distance, duration and fare estimates for a ride.
+    Args:
+        address: The location address
         
-        Returns:
-            Tuple[float, int, float]: distance (km), duration (minutes), fare ($)
-        """
-        # Calculate distance using Haversine formula
-        R = 6371  # Earth radius in km
-        lat1, lng1 = math.radians(pickup_lat), math.radians(pickup_lng)
-        lat2, lng2 = math.radians(dropoff_lat), math.radians(dropoff_lng)
-        
-        dlat = lat2 - lat1
-        dlng = lng2 - lng1
-        
-        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng/2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        distance = R * c
-        
-        # Assume average speed of 30 km/h in a city
-        duration = int(distance * 60 / 30)  # convert to minutes
-        
-        # Simple fare calculation: base fare + distance fare + time fare
-        base_fare = 2.50  # Base fare in $
-        distance_fare = distance * 1.25  # $1.25 per km
-        time_fare = duration * 0.35  # $0.35 per minute
-        
-        fare = round(base_fare + distance_fare + time_fare, 2)
-        
-        return round(distance, 2), max(1, duration), max(5.0, fare)
+    Returns:
+        Tuple: (latitude, longitude)
+    """
+    # In a real app, we would use a geocoding service to get real coordinates
+    # This is a simple hash-based approach to generate consistent coordinates
+    # based on the address string
+    
+    # Simple hash function to generate a number from the address
+    address_hash = sum(ord(c) for c in address)
+    
+    # Base coordinates (New York City area)
+    base_lat, base_lng = 40.7128, -74.0060
+    
+    # Generate a small offset based on the address hash
+    lat_offset = (address_hash % 100) / 100.0
+    lng_offset = ((address_hash // 100) % 100) / 100.0
+    
+    return round(base_lat + lat_offset - 0.5, 4), round(base_lng + lng_offset - 0.5, 4)
+
+
+def _calculate_ride_estimation(pickup_lat: float, pickup_lng: float, 
+                             dropoff_lat: float, dropoff_lng: float) -> Tuple[float, int, float]:
+    """
+    Calculate distance, duration and fare estimates for a ride.
+    
+    Returns:
+        Tuple[float, int, float]: distance (km), duration (minutes), fare ($)
+    """
+    # Calculate distance using Haversine formula
+    R = 6371  # Earth radius in km
+    lat1, lng1 = math.radians(pickup_lat), math.radians(pickup_lng)
+    lat2, lng2 = math.radians(dropoff_lat), math.radians(dropoff_lng)
+    
+    dlat = lat2 - lat1
+    dlng = lng2 - lng1
+    
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    distance = R * c
+    
+    # Assume average speed of 30 km/h in a city
+    duration = int(distance * 60 / 30)  # convert to minutes
+    
+    # Simple fare calculation: base fare + distance fare + time fare
+    base_fare = 2.50  # Base fare in $
+    distance_fare = distance * 1.25  # $1.25 per km
+    time_fare = duration * 0.35  # $0.35 per minute
+    
+    fare = round(base_fare + distance_fare + time_fare, 2)
+    
+    return round(distance, 2), max(1, duration), max(5.0, fare)

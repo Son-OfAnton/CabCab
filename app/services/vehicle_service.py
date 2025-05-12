@@ -85,6 +85,7 @@ class VehicleService:
             # Save vehicle to database
             response = requests.post(f"{BASE_URL}/vehicles", json=new_vehicle)
             response.raise_for_status()
+            saved_vehicle = response.json()
             
             # If this is the driver's first vehicle, update driver's vehicle_id
             if not user.get("vehicle_id"):
@@ -92,10 +93,13 @@ class VehicleService:
                 user["updated_at"] = datetime.now().isoformat()
                 
                 # Update user in database
-                response = requests.put(f"{BASE_URL}/users/{user['id']}", json=user)
-                response.raise_for_status()
+                update_response = requests.put(f"{BASE_URL}/users/{user['id']}", json=user)
+                update_response.raise_for_status()
             
-            return response.json()
+            # FIX: Instead of returning the response JSON directly, return our created vehicle data
+            # This ensures all expected fields are present even if the server response is incomplete
+            # This is especially important for the first vehicle registration
+            return saved_vehicle if isinstance(saved_vehicle, dict) and 'make' in saved_vehicle else new_vehicle
             
         except requests.RequestException as e:
             raise VehicleServiceError(f"Vehicle registration failed: {str(e)}")

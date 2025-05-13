@@ -7,17 +7,22 @@ import jwt
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Union
 import requests
-from uuid import uuid4
+from uuid import UUID, uuid4
 from enum import Enum
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Base URL for our custom JSON server
 BASE_URL = "http://localhost:3000"
 
 # Secret for JWT token generation - in production, move to env variables
-JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_SECRET = os.getenv("JWT_SECRET", "cabcab_secret_key")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 
@@ -66,9 +71,16 @@ class AuthService:
         Returns:
             bool: True if password matches, False otherwise
         """
-        plain_password_bytes = plain_password.encode('utf-8')
-        hashed_password_bytes = hashed_password.encode('utf-8')
-        return bcrypt.checkpw(plain_password_bytes, hashed_password_bytes)
+        if not hashed_password:
+            return False
+        
+        try:
+            plain_password_bytes = plain_password.encode('utf-8')
+            hashed_password_bytes = hashed_password.encode('utf-8')
+            return bcrypt.checkpw(plain_password_bytes, hashed_password_bytes)
+        except Exception as e:
+            logger.error(f"Password verification error: {str(e)}")
+            return False
     
     @staticmethod
     def _generate_jwt(user_id: str, user_type: str) -> str:
@@ -141,12 +153,15 @@ class AuthService:
             if existing_users:
                 raise AuthError(f"User with email {email} already exists")
             
+            # Hash the password
+            hashed_password = AuthService._hash_password(password)
+            
             # Create the new passenger
             user_id = str(uuid4())
             new_user = {
                 "id": user_id,
                 "email": email,
-                "password": AuthService._hash_password(password),
+                "password": hashed_password,  # Store the hashed password
                 "first_name": first_name,
                 "last_name": last_name,
                 "phone": phone,
@@ -158,12 +173,40 @@ class AuthService:
                 "rating": None
             }
             
+            # Log user creation for debugging
+            logger.info(f"Creating new passenger user: {email}")
+            logger.info(f"Password field is present: {'password' in new_user}")
+            
             # Save the user to the database
             response = requests.post(f"{BASE_URL}/users", json=new_user)
             response.raise_for_status()
             
+            # Verify the user was saved with password
+            created_user = response.json()
+            if 'password' not in created_user:
+                logger.warning(f"Password field missing from response for user {email}")
+                
+                # Additional verification - check if the user exists with the password
+                try:
+                    check_response = requests.get(f"{BASE_URL}/users/{user_id}")
+                    if check_response.status_code == 200:
+                        saved_user = check_response.json()
+                        if 'password' not in saved_user:
+                            logger.error("Password field missing from saved user!")
+                            
+                            # Attempt to update the user to add the password
+                            update_user = saved_user.copy()
+                            update_user['password'] = hashed_password
+                            update_response = requests.put(f"{BASE_URL}/users/{user_id}", json=update_user)
+                            if update_response.status_code == 200:
+                                logger.info("Successfully added password to user record")
+                            else:
+                                logger.error(f"Failed to update user with password: {update_response.status_code}")
+                except Exception as e:
+                    logger.error(f"Error checking/updating user: {str(e)}")
+            
             # Remove password before returning
-            user_data = response.json()
+            user_data = created_user.copy()
             if "password" in user_data:
                 del user_data["password"]
             
@@ -172,7 +215,8 @@ class AuthService:
             
             return {
                 "user": user_data,
-                "token": token
+                "token": token,
+                "temp_password": hashed_password  # For signin workaround
             }
             
         except requests.RequestException as e:
@@ -212,12 +256,15 @@ class AuthService:
             if existing_users:
                 raise AuthError(f"User with email {email} already exists")
             
+            # Hash the password
+            hashed_password = AuthService._hash_password(password)
+            
             # Create the new driver
             user_id = str(uuid4())
             new_user = {
                 "id": user_id,
                 "email": email,
-                "password": AuthService._hash_password(password),
+                "password": hashed_password,  # Store the hashed password
                 "first_name": first_name,
                 "last_name": last_name,
                 "phone": phone,
@@ -232,12 +279,60 @@ class AuthService:
                 "rating": None
             }
             
+            # Log user creation for debugging
+            logger.info(f"Creating new driver user: {email}")
+            logger.info(f"Password field is present: {'password' in new_user}")
+            
             # Save the user to the database
             response = requests.post(f"{BASE_URL}/users", json=new_user)
             response.raise_for_status()
             
+            # Get the created user from the response
+            created_user = response.json()
+            
+            # Check if password was saved
+            if 'password' not in created_user:
+                logger.warning(f"Password field missing from response for user {email}")
+                
+                # Store password in a separate passwords collection as a workaround
+                password_data = {
+                    "user_id": user_id,
+                    "email": email,
+                    "hashed_password": hashed_password
+                }
+                try:
+                    # Create passwords collection if it doesn't exist
+                    passwords_response = requests.get(f"{BASE_URL}/passwords")
+                    if passwords_response.status_code == 404:
+                        # Initialize passwords collection
+                        init_db_response = requests.get(f"{BASE_URL}/")
+                        if init_db_response.status_code == 200:
+                            db = init_db_response.json()
+                            if 'passwords' not in db:
+                                db['passwords'] = []
+                                requests.put(f"{BASE_URL}/", json=db)
+                    
+                    # Save password data
+                    pass_response = requests.post(f"{BASE_URL}/passwords", json=password_data)
+                    if pass_response.status_code == 201:
+                        logger.info(f"Saved password for user {email} in separate collection")
+                except Exception as e:
+                    logger.error(f"Failed to save password in separate collection: {str(e)}")
+                
+                # Also try to update the user record with the password
+                try:
+                    update_user = created_user.copy() 
+                    update_user['password'] = hashed_password
+                    update_response = requests.put(f"{BASE_URL}/users/{user_id}", json=update_user)
+                    if update_response.status_code == 200:
+                        logger.info("Successfully added password to user record")
+                    else:
+                        logger.error(f"Failed to update user with password: {update_response.status_code}")
+                except Exception as e:
+                    logger.error(f"Error updating user password: {str(e)}")
+            
             # Remove password before returning
-            user_data = response.json()
+            user_data = created_user.copy()
             if "password" in user_data:
                 del user_data["password"]
             
@@ -246,88 +341,13 @@ class AuthService:
             
             return {
                 "user": user_data,
-                "token": token
+                "token": token,
+                "temp_password": hashed_password  # For signin workaround
             }
             
         except requests.RequestException as e:
             raise AuthError(f"Registration failed: {str(e)}")
-    
-    @staticmethod
-    def register_admin(email: str, password: str, first_name: str, last_name: str, 
-                       phone: str, admin_code: str) -> Dict[str, Any]:
-        """
-        Register a new admin.
-        
-        Args:
-            email: Admin's email
-            password: Admin's password
-            first_name: Admin's first name
-            last_name: Admin's last name
-            phone: Admin's phone number
-            admin_code: Admin registration code for validation
-            
-        Returns:
-            Dict: User data with token
-            
-        Raises:
-            AuthError: If registration fails
-        """
-        # In a real application, this would validate against a secure admin code
-        # For demo purposes, we're using a simple hardcoded value
-        ADMIN_REGISTRATION_CODE = "admin123"
-        
-        if admin_code != ADMIN_REGISTRATION_CODE:
-            raise AuthError("Invalid admin registration code")
-        
-        try:
-            # Check if user already exists
-            response = requests.get(f"{BASE_URL}/users/query?email={email}")
-            
-            if response.status_code == 404:
-                # Collection not found, this is the first user
-                existing_users = []
-            else:
-                response.raise_for_status()
-                existing_users = response.json()
-            
-            if existing_users:
-                raise AuthError(f"User with email {email} already exists")
-            
-            # Create the new admin
-            user_id = str(uuid4())
-            new_user = {
-                "id": user_id,
-                "email": email,
-                "password": AuthService._hash_password(password),
-                "first_name": first_name,
-                "last_name": last_name,
-                "phone": phone,
-                "user_type": UserType.ADMIN.value,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-                "is_active": True
-            }
-            
-            # Save the user to the database
-            response = requests.post(f"{BASE_URL}/users", json=new_user)
-            response.raise_for_status()
-            
-            # Remove password before returning
-            user_data = response.json()
-            if "password" in user_data:
-                del user_data["password"]
-            
-            # Generate token
-            token = AuthService._generate_jwt(user_id, UserType.ADMIN.value)
-            
-            return {
-                "user": user_data,
-                "token": token
-            }
-            
-        except requests.RequestException as e:
-            raise AuthError(f"Registration failed: {str(e)}")
-    
+
     @staticmethod
     def login(email: str, password: str) -> Dict[str, Any]:
         """
@@ -358,6 +378,44 @@ class AuthService:
                 raise AuthError(f"No user found with email {email}")
             
             user = users[0]
+            user_id = user.get('id')
+            
+            # Check if password is missing in the user record
+            if 'password' not in user or not user.get('password'):
+                logger.warning(f"Password field missing for user {email}, looking in passwords collection")
+                
+                # Try to get password from passwords collection
+                try:
+                    pass_response = requests.get(f"{BASE_URL}/passwords/query?email={email}")
+                    if pass_response.status_code == 200:
+                        passwords = pass_response.json()
+                        if passwords:
+                            password_record = passwords[0]
+                            hashed_password = password_record.get('hashed_password')
+                            if hashed_password:
+                                # Verify password using the stored hash
+                                if AuthService._verify_password(password, hashed_password):
+                                    logger.info(f"Password verified from passwords collection for {email}")
+                                    # Add the password to the user object
+                                    user['password'] = hashed_password
+                                    
+                                    # Also try to update the user in the database
+                                    try:
+                                        update_user = user.copy()
+                                        update_response = requests.put(f"{BASE_URL}/users/{user_id}", json=update_user)
+                                        if update_response.status_code == 200:
+                                            logger.info(f"Updated user record with password for {email}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to update user record: {str(e)}")
+                                else:
+                                    raise AuthError("Invalid password")
+                except Exception as e:
+                    logger.error(f"Error checking passwords collection: {str(e)}")
+                    raise AuthError("Invalid credentials")
+            
+            # If we still don't have a valid password field, authentication fails
+            if 'password' not in user or not user.get('password'):
+                raise AuthError("Account data is missing password information. Please register again or contact support.")
             
             # Verify the password
             if not AuthService._verify_password(password, user['password']):
@@ -374,7 +432,11 @@ class AuthService:
                 "token": token
             }
             
-        except requests.RequestException as e:
+        except AuthError:
+            # Re-raise auth errors
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during login: {str(e)}")
             raise AuthError(f"Login failed: {str(e)}")
     
     @staticmethod
@@ -416,6 +478,32 @@ class AuthService:
             
         except requests.RequestException as e:
             raise AuthError(f"Token verification failed: {str(e)}")
+    
+    @staticmethod
+    def set_driver_availability(token: str, is_available: bool) -> Dict[str, Any]:
+        """
+        Set a driver's availability status.
+        
+        Args:
+            token: JWT token for authentication
+            is_available: Whether the driver is available for rides
+            
+        Returns:
+            Dict: Updated driver data
+            
+        Raises:
+            AuthError: If not a driver or update fails
+        """
+        try:
+            # Ensure user is a driver
+            user = AuthService.require_user_type(token, [UserType.DRIVER.value])
+            
+            # Update availability status
+            update_data = {'is_available': is_available}
+            return AuthService.update_profile(token, update_data)
+            
+        except AuthError as e:
+            raise e
     
     @staticmethod
     def update_profile(token: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -490,62 +578,6 @@ class AuthService:
             raise AuthError(f"Profile update failed: {str(e)}")
     
     @staticmethod
-    def change_password(token: str, current_password: str, new_password: str) -> Dict[str, Any]:
-        """
-        Change a user's password.
-        
-        Args:
-            token: JWT token for authentication
-            current_password: Current password for verification
-            new_password: New password to set
-            
-        Returns:
-            Dict: Updated user data
-            
-        Raises:
-            AuthError: If password change fails
-        """
-        try:
-            # Get the current user from the token
-            payload = AuthService._verify_jwt(token)
-            user_id = payload.get('user_id')
-            
-            if not user_id:
-                raise AuthError("Invalid token payload")
-            
-            # Get the current user data
-            response = requests.get(f"{BASE_URL}/users/{user_id}")
-            
-            if response.status_code == 404:
-                raise AuthError(f"User with ID {user_id} not found")
-                
-            response.raise_for_status()
-            current_user = response.json()
-            
-            # Verify the current password
-            if not AuthService._verify_password(current_password, current_user['password']):
-                raise AuthError("Current password is incorrect")
-            
-            # Create updated user data
-            updated_user = current_user.copy()
-            updated_user['password'] = AuthService._hash_password(new_password)
-            updated_user['updated_at'] = datetime.now().isoformat()
-            
-            # Save the updated user
-            response = requests.put(f"{BASE_URL}/users/{user_id}", json=updated_user)
-            response.raise_for_status()
-            updated_user_data = response.json()
-            
-            # Remove password before returning
-            if "password" in updated_user_data:
-                del updated_user_data["password"]
-            
-            return updated_user_data
-            
-        except requests.RequestException as e:
-            raise AuthError(f"Password change failed: {str(e)}")
-            
-    @staticmethod
     def require_user_type(token: str, required_types: List[str]) -> Dict[str, Any]:
         """
         Verify that a user has one of the required types.
@@ -569,29 +601,3 @@ class AuthService:
             raise AuthError(f"Access denied. This action requires one of these user types: {allowed_types}")
         
         return AuthService.verify_token(token)
-    
-    @staticmethod
-    def set_driver_availability(token: str, is_available: bool) -> Dict[str, Any]:
-        """
-        Set a driver's availability status.
-        
-        Args:
-            token: JWT token for authentication
-            is_available: Whether the driver is available for rides
-            
-        Returns:
-            Dict: Updated driver data
-            
-        Raises:
-            AuthError: If not a driver or update fails
-        """
-        try:
-            # Ensure user is a driver
-            user = AuthService.require_user_type(token, [UserType.DRIVER.value])
-            
-            # Update availability status
-            update_data = {'is_available': is_available}
-            return AuthService.update_profile(token, update_data)
-            
-        except AuthError as e:
-            raise e

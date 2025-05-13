@@ -48,7 +48,17 @@ def register_passenger(email, password, first_name, last_name, phone):
 def register_driver(email, password, first_name, last_name, phone, license):
     """Register as a driver."""
     try:
+        # Debug output to see what's being sent
+        click.echo("Registering driver...")
+        click.echo(f"Email: {email}")
+        click.echo(f"Name: {first_name} {last_name}")
+        
         result = AuthService.register_driver(email, password, first_name, last_name, phone, license)
+        
+        # Debug output
+        if "user" in result and "password" not in result["user"]:
+            click.echo("Warning: Password field is missing from the server response.")
+        
         save_token(result["token"])
         click.echo(f"Driver {first_name} {last_name} registered successfully!")
         click.echo(f"Email: {email}")
@@ -83,6 +93,9 @@ def register_admin(email, password, first_name, last_name, phone, code):
 def signin(email, password):
     """Log in with credentials."""
     try:
+        # Debug output
+        click.echo(f"Signing in with email: {email}")
+        
         result = AuthService.login(email, password)
         save_token(result["token"])
         user = result["user"]
@@ -102,6 +115,8 @@ def signin(email, password):
             click.echo("You are now logged in.")
     except AuthError as e:
         click.echo(f"Error during signin: {str(e)}", err=True)
+    except Exception as e:
+        click.echo(f"Unexpected error: {str(e)}", err=True)
 
 
 @auth_group.command()

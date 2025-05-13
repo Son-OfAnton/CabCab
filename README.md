@@ -121,6 +121,84 @@ cabcab auth profile change-password
 
 You will be prompted for your current and new passwords.
 
+## Vehicle Commands
+
+### Register a Vehicle
+
+Register a new vehicle:
+
+```bash
+cabcab vehicle register
+```
+
+You will be prompted for details such as make, model, year, color, license plate, type, and capacity.
+
+### List Vehicles
+
+List all vehicles registered by the current driver:
+
+```bash
+cabcab vehicle list
+```
+
+### Update Vehicle
+
+Update details of a specific vehicle:
+
+```bash
+cabcab vehicle update <vehicle_id> --color "Blue" --capacity 6
+```
+
+### Delete Vehicle
+
+Delete a specific vehicle:
+
+```bash
+cabcab vehicle delete <vehicle_id> --confirm
+```
+
+## Ride Commands
+
+### Request a Ride
+
+Request a new ride:
+
+```bash
+cabcab ride request --pickup "123 Main St, Boston, MA" --dropoff "456 Elm St, Cambridge, MA"
+```
+
+### List Rides
+
+View your ride history:
+
+```bash
+cabcab ride list --status "COMPLETED"
+```
+
+### Check Ride Status
+
+Check the status of a ride:
+
+```bash
+cabcab ride status <ride_id>
+```
+
+### Cancel a Ride
+
+Cancel a ride request:
+
+```bash
+cabcab ride cancel <ride_id> --confirm
+```
+
+### Rate a Ride
+
+Rate a completed ride:
+
+```bash
+cabcab ride rate <ride_id> --rating 5 --feedback "Great ride!"
+```
+
 ## Driver Commands
 
 ### Set Availability
@@ -131,6 +209,38 @@ Set your availability to accept ride requests:
 cabcab driver availability --status available
 ```
 
+### View Available Rides
+
+View ride requests available for acceptance:
+
+```bash
+cabcab driver rides
+```
+
+### View Ride Details
+
+View detailed information about a specific ride request:
+
+```bash
+cabcab driver ride-details <ride_id>
+```
+
+### Accept a Ride
+
+Accept a ride request:
+
+```bash
+cabcab driver accept <ride_id>
+```
+
+### Cancel an Accepted Ride
+
+Cancel a ride you have accepted:
+
+```bash
+cabcab driver cancel <ride_id> --confirm
+```
+
 ## Admin Commands
 
 ### Verify Driver
@@ -138,8 +248,16 @@ cabcab driver availability --status available
 Verify or unverify a driver:
 
 ```bash
-cabcab admin verify-driver <user_id> --verify
-cabcab admin verify-driver <user_id> --unverify
+cabcab admin verify-driver <email> --verify
+cabcab admin verify-driver <email> --unverify
+```
+
+## Run Arbitrary Commands
+
+Execute a CabCab command directly:
+
+```bash
+cabcab run <command> --option value
 ```
 
 ## Usage

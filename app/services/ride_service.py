@@ -188,13 +188,14 @@ class RideService:
             raise RideServiceError(f"Failed to accept ride: {str(e)}")
     
     @staticmethod
-    def get_ride_by_id(ride_id: str, include_locations: bool = True) -> Dict[str, Any]:
+    def get_ride_by_id(ride_id: str, include_locations: bool = True, include_driver_details: bool = False) -> Dict[str, Any]:
         """
         Get a ride by its ID.
         
         Args:
             ride_id: ID of the ride to retrieve
             include_locations: Whether to include location details
+            include_driver_details: Whether to include detailed driver info
             
         Returns:
             Dict: Ride data with location details if requested
@@ -211,23 +212,48 @@ class RideService:
             response.raise_for_status()
             ride = response.json()
             
-            # Include location details if requested
-            if include_locations:
+            # Add location details if requested
+            if include_locations and "pickup_location" not in ride and "dropoff_location" not in ride:
                 # Get pickup location
-                try:
-                    pickup_response = requests.get(f"{BASE_URL}/locations/{ride['pickup_location_id']}")
-                    pickup_response.raise_for_status()
-                    ride["pickup_location"] = pickup_response.json()
-                except requests.RequestException:
-                    ride["pickup_location"] = {"id": ride["pickup_location_id"]}
+                pickup_loc_id = ride.get("pickup_location_id")
+                if pickup_loc_id:
+                    try:
+                        pickup_response = requests.get(f"{BASE_URL}/locations/{pickup_loc_id}")
+                        if pickup_response.status_code == 200:
+                            ride["pickup_location"] = pickup_response.json()
+                    except requests.RequestException:
+                        pass
                 
                 # Get dropoff location
+                dropoff_loc_id = ride.get("dropoff_location_id")
+                if dropoff_loc_id:
+                    try:
+                        dropoff_response = requests.get(f"{BASE_URL}/locations/{dropoff_loc_id}")
+                        if dropoff_response.status_code == 200:
+                            ride["dropoff_location"] = dropoff_response.json()
+                    except requests.RequestException:
+                        pass
+            
+            # Add driver details if requested and available
+            if include_driver_details and ride.get("driver_id"):
+                driver_id = ride.get("driver_id")
                 try:
-                    dropoff_response = requests.get(f"{BASE_URL}/locations/{ride['dropoff_location_id']}")
-                    dropoff_response.raise_for_status()
-                    ride["dropoff_location"] = dropoff_response.json()
+                    driver_response = requests.get(f"{BASE_URL}/users/{driver_id}")
+                    if driver_response.status_code == 200:
+                        driver = driver_response.json()
+                        ride["driver"] = driver
+                        
+                        # Add vehicle details if available
+                        vehicle_id = driver.get("vehicle_id")
+                        if vehicle_id:
+                            try:
+                                vehicle_response = requests.get(f"{BASE_URL}/vehicles/{vehicle_id}")
+                                if vehicle_response.status_code == 200:
+                                    ride["vehicle"] = vehicle_response.json()
+                            except requests.RequestException:
+                                pass
                 except requests.RequestException:
-                    ride["dropoff_location"] = {"id": ride["dropoff_location_id"]}
+                    pass
                     
             return ride
             
@@ -251,7 +277,7 @@ class RideService:
             AuthError: If authentication fails
         """
         try:
-            # Verify token
+            # Verify token 
             user = AuthService.verify_token(token)
             
             # Get all rides for this user
@@ -412,6 +438,96 @@ class RideService:
             
         except requests.RequestException as e:
             raise RideServiceError(f"Failed to cancel ride: {str(e)}")
+
+    @staticmethod
+    def rate_ride(token: str, ride_id: str, rating: int, feedback: str = "") -> Dict[str, Any]:
+        """
+        Rate a completed ride and provide feedback.
+        
+        Args:
+            token: JWT token for authentication
+            ride_id: ID of the ride to rate
+            rating: Rating value (1-5 stars)
+            feedback: Optional feedback text
+            
+        Returns:
+            Dict: Updated ride data
+            
+        Raises:
+            RideServiceError: If ride rating fails
+            AuthError: If authentication fails
+        """
+        try:
+            # Verify token
+            user = AuthService.verify_token(token)
+            
+            # Validate rating
+            if not 1 <= rating <= 5:
+                raise RideServiceError("Rating must be between 1 and 5 stars.")
+                
+            # Get the ride
+            ride = RideService.get_ride_by_id(ride_id, include_locations=False)
+            
+            # Check if ride belongs to this user
+            if ride.get("user_id") != user["id"]:
+                raise RideServiceError("You can only rate your own rides.")
+            
+            # Check if ride is completed
+            if ride.get("status") != RideStatus.COMPLETED.name:
+                raise RideServiceError("Only completed rides can be rated.")
+                
+            # Check if ride has already been rated
+            if ride.get("rating") is not None:
+                raise RideServiceError("This ride has already been rated.")
+            
+            # Update ride with rating
+            ride["rating"] = rating
+            ride["feedback"] = feedback
+            
+            # Save updated ride
+            response = requests.put(f"{BASE_URL}/rides/{ride_id}", json=ride)
+            response.raise_for_status()
+            updated_ride = response.json()
+            
+            # Update driver rating if a driver was assigned
+            driver_id = ride.get("driver_id")
+            if driver_id:
+                try:
+                    # Get driver details
+                    driver_response = requests.get(f"{BASE_URL}/users/{driver_id}")
+                    if driver_response.status_code == 200:
+                        driver = driver_response.json()
+                        
+                        # Calculate new rating
+                        current_rating = driver.get("rating", 0)
+                        rating_count = driver.get("rating_count", 0)
+                        
+                        # Update driver rating using weighted average
+                        if rating_count > 0 and current_rating:
+                            new_rating_count = rating_count + 1
+                            new_rating = ((current_rating * rating_count) + rating) / new_rating_count
+                            
+                            # Round to 2 decimal places
+                            new_rating = round(new_rating, 2)
+                        else:
+                            new_rating_count = 1
+                            new_rating = rating
+                        
+                        # Update driver in database
+                        driver["rating"] = new_rating
+                        driver["rating_count"] = new_rating_count
+                        
+                        driver_update_response = requests.put(f"{BASE_URL}/users/{driver_id}", json=driver)
+                        driver_update_response.raise_for_status()
+                except requests.RequestException as e:
+                    # Don't fail the whole operation if driver rating update fails
+                    # Just log the error or handle it appropriately
+                    pass
+                    
+            return updated_ride
+            
+        except requests.RequestException as e:
+            raise RideServiceError(f"Failed to update ride rating: {str(e)}")
 
 
 def _generate_coordinates_for_location(address):

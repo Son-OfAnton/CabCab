@@ -230,6 +230,12 @@ def ride_status(ride_id):
         click.echo(f"   Duration: {ride.get('duration')} minutes")
         click.echo(f"   Estimated Fare: ${ride.get('estimated_fare')}")
         
+        # Display rating if available
+        if ride.get('rating'):
+            click.echo(f"   Rating: {'★' * ride.get('rating')}{' ' * (5 - ride.get('rating'))} ({ride.get('rating')}/5)")
+            if ride.get('feedback'):
+                click.echo(f"   Feedback: \"{ride.get('feedback')}\"")
+        
         # Display driver information if assigned
         if ride.get('driver_id'):
             click.echo("\n👤 Driver Information:")
@@ -380,12 +386,18 @@ def rate_ride(ride_id, rating, feedback):
             ride_id = completed_rides[0]['id']
             click.echo(f"Rating your most recent completed ride (ID: {ride_id})")
         
-        # This is a placeholder for the full implementation
-        # In a complete solution, we would update the ride with the rating
-        click.echo("This feature is coming soon!")
-        click.echo(f"Your {rating}-star rating for ride {ride_id} has been recorded.")
+        # Rate the ride
+        rated_ride = RideService.rate_ride(token, ride_id, rating, feedback)
+        
+        # Display success message
+        click.echo("\n⭐ Ride rated successfully! ⭐")
+        click.echo(f"Ride ID: {rated_ride['id']}")
+        click.echo(f"Rating: {'★' * rating}{' ' * (5 - rating)} ({rating}/5)")
         if feedback:
             click.echo(f"Feedback: \"{feedback}\"")
+            
+        click.echo("\nThank you for your feedback! Your rating helps us improve our service.")
+        click.echo("It also helps good drivers get more ride requests.")
 
     except (RideServiceError, AuthError) as e:
         click.echo(f"Error: {str(e)}", err=True)

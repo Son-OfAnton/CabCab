@@ -15,6 +15,7 @@ from app.cli_module.commands.driver_commands import driver_group
 from app.cli_module.commands.admin_commands import admin_group
 from app.cli_module.commands.vehicle_commands import vehicle_group
 from app.cli_module.commands.ride_commands import ride_group
+from app.cli_module.commands.payment_commands import payment_group  # Add payment commands
 from app.cli_module.commands.run_commands import run_command
 
 
@@ -30,6 +31,7 @@ cli.add_command(driver_group)
 cli.add_command(admin_group)
 cli.add_command(vehicle_group)
 cli.add_command(ride_group)
+cli.add_command(payment_group)  # Register the payment command group
 cli.add_command(run_command)
 
 

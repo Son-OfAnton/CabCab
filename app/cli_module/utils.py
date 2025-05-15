@@ -1,11 +1,12 @@
 """Utility functions for the CLI interface."""
 
+from functools import wraps
 import os
 import json
 from typing import Optional, List
 
 import click
-from app.services.auth_service import AuthService, AuthError
+from app.services.auth_service import AuthService, AuthError, AuthValidationError, validate_user_not_banned
 
 # Config file to store auth token
 CONFIG_DIR = os.path.expanduser("~/.cabcab")
@@ -48,9 +49,13 @@ def is_authenticated() -> bool:
         return False
 
 
+# Enhanced decorator for requiring specific user types that also checks for bans
 def require_user_type(required_types: List[str]):
-    """Decorator to require specific user types."""
+    """
+    Enhanced decorator to require specific user types and check for bans.
+    """
     def decorator(f):
+        @wraps(f)
         def wrapped(*args, **kwargs):
             token = get_token()
             if not token:
@@ -58,10 +63,20 @@ def require_user_type(required_types: List[str]):
                 return
             
             try:
+                # First check that the user has required type
                 AuthService.require_user_type(token, required_types)
+                
+                # Then check if user is banned (applies to passengers only)
+                # Admin users are exempt from ban checks in validate_user_not_banned
+                validate_user_not_banned(token)
+                
                 return f(*args, **kwargs)
+                
             except AuthError as e:
                 click.echo(f"Access denied: {str(e)}", err=True)
+                return
+            except AuthValidationError as e:
+                click.echo(f"Account restricted: {str(e)}", err=True)
                 return
         return wrapped
     return decorator

@@ -363,6 +363,9 @@ class AuthService:
         Raises:
             AuthError: If login fails
         """
+
+        # Check if user is banned
+
         try:
             # Find the user
             response = requests.get(f"{BASE_URL}/users/query?email={email}")
@@ -379,6 +382,11 @@ class AuthService:
             
             user = users[0]
             user_id = user.get('id')
+            
+            if user.get('user_type') == UserType.PASSENGER.value and user.get('is_banned', False):
+                reason = user.get('ban_reason') or "No reason provided"
+                ban_type = "permanently" if user.get('is_permanent_ban', False) else "temporarily"
+                raise AuthError(f"Your account has been {ban_type} banned. Reason: {reason}. Please contact customer support for assistance.")
             
             # Check if password is missing in the user record
             if 'password' not in user or not user.get('password'):
@@ -469,6 +477,10 @@ class AuthService:
                 
             response.raise_for_status()
             user = response.json()
+
+            if user.get('is_banned', False) and user.get('user_type') == UserType.PASSENGER.value:
+                reason = user.get('ban_reason') or "No reason provided"
+                raise AuthError(f"Your account is banned: {reason}")
             
             # Remove password before returning
             if "password" in user:
@@ -601,3 +613,57 @@ class AuthService:
             raise AuthError(f"Access denied. This action requires one of these user types: {allowed_types}")
         
         return AuthService.verify_token(token)
+    
+from typing import Dict, Any, Optional
+
+from app.services.auth_service import AuthService, AuthError
+from app.services.user_service import UserService, UserServiceError
+
+
+class AuthValidationError(Exception):
+    """Custom exception for authentication validation errors."""
+    pass
+
+
+def validate_user_not_banned(token: str) -> Dict[str, Any]:
+    """
+    Validate that a user is not banned.
+    
+    Args:
+        token: JWT token for authentication
+        
+    Returns:
+        Dict: User data if not banned
+        
+    Raises:
+        AuthValidationError: If user is banned
+        AuthError: If token is invalid
+    """
+    try:
+        # First verify the token and get user data
+        user = AuthService.verify_token(token)
+        
+        # Admin users are never subject to bans
+        if user.get('user_type') == 'admin':
+            return user
+            
+        # Check if user is banned
+        try:
+            ban_status = UserService.get_ban_status(user['id'])
+            
+            if ban_status.get('is_banned'):
+                reason = ban_status.get('reason') or "No reason provided"
+                permanent = "permanently" if ban_status.get('is_permanent') else "temporarily"
+                
+                raise AuthValidationError(
+                    f"Your account has been {permanent} banned. Reason: {reason}. "
+                    f"Please contact customer support for assistance."
+                )
+        except UserServiceError:
+            # If checking ban status fails, allow operation to continue
+            pass
+            
+        return user
+            
+    except AuthError as e:
+        raise  # Re-throw auth errors without wrapping

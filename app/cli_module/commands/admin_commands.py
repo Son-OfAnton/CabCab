@@ -3,6 +3,7 @@
 from datetime import datetime
 import click
 import requests
+from tabulate import tabulate
 
 from app.services.auth_service import UserType
 from app.services.user_service import UserService, UserServiceError
@@ -112,32 +113,368 @@ def driver_info(driver_id, email):
         click.echo(f"Phone: {user['phone']}")
         
         # Add driver-specific information if available
-        if 'license_number' in driver:
+        if driver.get('license_number') and driver['license_number'] != 'Not provided':
             click.echo(f"License Number: {driver['license_number']}")
+        else:
+            click.echo(f"License Number: Not provided")
         
-        if user.get('is_verified'):
-            click.echo(f"Verification Status: Verified")
-        else:
-            click.echo(f"Verification Status: Not Verified")
-            
-        if driver.get('is_active'):
-            click.echo(f"Account Status: Active")
-        else:
-            click.echo(f"Account Status: Inactive")
-            
-        if driver.get('rating'):
+        # Show verification status
+        verification_status = "Verified" if driver.get('is_verified') else "Not Verified"
+        click.echo(f"Verification Status: {verification_status}")
+        
+        # Show account status
+        account_status = "Active" if driver.get('is_active') else "Inactive"
+        click.echo(f"Account Status: {account_status}")
+        
+        # Show rating information
+        if isinstance(driver.get('rating'), (int, float)):
             click.echo(f"Rating: {driver['rating']}/5.0")
         else:
             click.echo(f"Rating: Not rated yet")
-            
+        
+        # Show date joined
+        if driver.get('created_at'):
+            # Try to format the date nicely if it's in ISO format
+            try:
+                created_date = datetime.fromisoformat(driver['created_at'].replace('Z', '+00:00'))
+                click.echo(f"Joined: {created_date.strftime('%B %d, %Y')}")
+            except (ValueError, AttributeError):
+                click.echo(f"Joined: {driver['created_at']}")
+        
         # Show vehicle information if available
         if vehicle:
             click.echo("\n--- Vehicle Information ---")
-            click.echo(f"Vehicle: {vehicle.get('year', 'N/A')} {vehicle.get('make', 'N/A')} {vehicle.get('model', 'N/A')}")
+            vehicle_year = vehicle.get('year', 'N/A')
+            vehicle_make = vehicle.get('make', 'N/A')
+            vehicle_model = vehicle.get('model', 'N/A')
+            click.echo(f"Vehicle: {vehicle_year} {vehicle_make} {vehicle_model}")
             click.echo(f"Color: {vehicle.get('color', 'N/A')}")
             click.echo(f"License Plate: {vehicle.get('license_plate', 'N/A')}")
             click.echo(f"Type: {vehicle.get('vehicle_type', 'N/A')}")
             click.echo(f"Capacity: {vehicle.get('capacity', 'N/A')} passengers")
+        else:
+            click.echo("\n--- Vehicle Information ---")
+            click.echo("No vehicle information available")
+                
+    except UserServiceError as e:
+        click.echo(f"Error: {str(e)}", err=True)
+    except Exception as e:
+        click.echo(f"Unexpected error: {str(e)}", err=True)
+
+
+@admin_group.command(name="list-drivers", help="List all drivers registered on the platform.")
+@click.option('--active-only', is_flag=True, help='Show only active drivers')
+@click.option('--verified-only', is_flag=True, help='Show only verified drivers')
+@click.option('--available-only', is_flag=True, help='Show only available drivers')
+@click.option('--format', 'output_format', type=click.Choice(['table', 'detailed'], case_sensitive=False), 
+              default='table', help='Output format (table or detailed)')
+@require_user_type([UserType.ADMIN.value])
+def list_drivers(active_only, verified_only, available_only, output_format):
+    """
+    List all drivers registered on the platform with optional filtering.
+    
+    Requires admin privileges.
+    """
+    token = get_token()
+    if not token:
+        click.echo("You are not signed in. Please sign in first.", err=True)
+        return
+    
+    try:
+        # Get the list of drivers using our service method
+        drivers = UserService.list_all_drivers(token, active_only, verified_only)
+        
+        # If no drivers were found
+        if not drivers:
+            click.echo("No drivers found matching the specified criteria.")
+            return
+        
+        # Filter for available drivers if requested
+        if available_only:
+            drivers = [d for d in drivers if d.get('is_available', False)]
+            if not drivers:
+                click.echo("No available drivers found matching the specified criteria.")
+                return
+        
+        # Count total drivers
+        total_drivers = len(drivers)
+        
+        # Output format: table (default) or detailed
+        if output_format == 'table':
+            # Prepare table data
+            table_data = []
+            headers = ["ID", "Name", "Email", "Phone", "Status", "Verified", "Available", "Rating", "Rides", "Vehicle"]
+            
+            for driver in drivers:
+                # Format the driver data for the table
+                name = f"{driver.get('first_name', '')} {driver.get('last_name', '')}"
+                status = "Active" if driver.get('is_active', True) else "Inactive"
+                verified = "✓" if driver.get('is_verified', False) else "✗"
+                available = "✓" if driver.get('is_available', False) else "✗"
+                
+                rating = driver.get('rating')
+                if rating is None or rating == "":
+                    rating_display = "N/A"
+                else:
+                    rating_display = f"{rating}/5.0"
+                
+                rides = f"{driver.get('completed_rides', 0)}/{driver.get('total_rides', 0)}"
+                
+                if driver.get('has_vehicle', False) and driver.get('vehicle'):
+                    vehicle = driver.get('vehicle')
+                else:
+                    vehicle = "None"
+                
+                # Add row to table
+                table_data.append([
+                    driver.get('id', ''),
+                    name,
+                    driver.get('email', ''),
+                    driver.get('phone', ''),
+                    status,
+                    verified,
+                    available,
+                    rating_display,
+                    rides,
+                    vehicle
+                ])
+            
+            # Display the table
+            click.echo(f"\nTotal drivers: {total_drivers}")
+            filters_applied = []
+            if active_only:
+                filters_applied.append("active only")
+            if verified_only:
+                filters_applied.append("verified only")
+            if available_only:
+                filters_applied.append("available only")
+            
+            if filters_applied:
+                click.echo(f"Filters applied: {', '.join(filters_applied)}")
+                
+            click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+            
+        else:  # detailed view
+            # For each driver, display detailed information
+            click.echo(f"\nTotal drivers: {total_drivers}")
+            
+            for i, driver in enumerate(drivers, 1):
+                click.echo(f"\n--- Driver {i}/{total_drivers} ---")
+                click.echo(f"ID: {driver.get('id', '')}")
+                click.echo(f"Name: {driver.get('first_name', '')} {driver.get('last_name', '')}")
+                click.echo(f"Email: {driver.get('email', '')}")
+                click.echo(f"Phone: {driver.get('phone', '')}")
+                
+                # License number if available
+                license_number = driver.get('license_number')
+                if license_number and license_number != "":
+                    click.echo(f"License: {license_number}")
+                
+                # Status information
+                status = "Active" if driver.get('is_active', True) else "Inactive"
+                click.echo(f"Status: {status}")
+                
+                verified = "Verified" if driver.get('is_verified', False) else "Not Verified"
+                click.echo(f"Verification: {verified}")
+                
+                available = "Available" if driver.get('is_available', False) else "Not Available"
+                click.echo(f"Availability: {available}")
+                
+                # Rating information
+                rating = driver.get('rating')
+                if rating is None or rating == "":
+                    click.echo("Rating: Not rated yet")
+                else:
+                    click.echo(f"Rating: {rating}/5.0")
+                
+                # Ride statistics
+                completed = driver.get('completed_rides', 0)
+                total = driver.get('total_rides', 0)
+                click.echo(f"Rides: {completed} completed out of {total} total")
+                
+                # Vehicle information
+                if driver.get('has_vehicle', False) and driver.get('vehicle'):
+                    click.echo(f"Vehicle: {driver.get('vehicle')}")
+                    vehicle_type = driver.get('vehicle_type')
+                    if vehicle_type:
+                        click.echo(f"Vehicle Type: {vehicle_type}")
+                else:
+                    click.echo("Vehicle: None registered")
+                
+                # Registration date if available
+                if driver.get('created_at'):
+                    try:
+                        created_date = datetime.fromisoformat(driver.get('created_at').replace('Z', '+00:00'))
+                        click.echo(f"Joined: {created_date.strftime('%B %d, %Y')}")
+                    except (ValueError, AttributeError):
+                        click.echo(f"Joined: {driver.get('created_at')}")
+                
+    except UserServiceError as e:
+        click.echo(f"Error: {str(e)}", err=True)
+    except Exception as e:
+        click.echo(f"Unexpected error: {str(e)}", err=True)
+
+
+@admin_group.command(name="list-passengers", help="List all passengers registered on the platform.")
+@click.option('--active-only', is_flag=True, help='Show only active passengers')
+@click.option('--include-banned', is_flag=True, help='Include banned passengers')
+@click.option('--format', 'output_format', type=click.Choice(['table', 'detailed'], case_sensitive=False), 
+              default='table', help='Output format (table or detailed)')
+@require_user_type([UserType.ADMIN.value])
+def list_passengers(active_only, include_banned, output_format):
+    """
+    List all passengers registered on the platform with optional filtering.
+    
+    Requires admin privileges.
+    """
+    token = get_token()
+    if not token:
+        click.echo("You are not signed in. Please sign in first.", err=True)
+        return
+    
+    try:
+        # Get the list of passengers using our service method
+        passengers = UserService.list_all_passengers(token, active_only, include_banned)
+        
+        # If no passengers were found
+        if not passengers:
+            click.echo("No passengers found matching the specified criteria.")
+            return
+        
+        # Count total passengers
+        total_passengers = len(passengers)
+        
+        # Output format: table (default) or detailed
+        if output_format == 'table':
+            # Prepare table data
+            table_data = []
+            headers = ["ID", "Name", "Email", "Phone", "Status", "Total Rides", "Completed", "Cancelled", "Avg Rating", "Payment Methods"]
+            
+            for passenger in passengers:
+                # Format the passenger data for the table
+                name = f"{passenger.get('first_name', '')} {passenger.get('last_name', '')}"
+                
+                # Status includes both active and ban status
+                if passenger.get('is_banned', False):
+                    status = "Banned"
+                elif passenger.get('is_active', True):
+                    status = "Active"
+                else:
+                    status = "Inactive"
+                
+                total_rides = passenger.get('total_rides', 0)
+                completed_rides = passenger.get('completed_rides', 0)
+                cancelled_rides = passenger.get('cancelled_rides', 0)
+                
+                # Average rating given to drivers
+                avg_rating = passenger.get('avg_rating_given')
+                if avg_rating is not None:
+                    rating_display = f"{avg_rating:.1f}/5.0"
+                else:
+                    rating_display = "N/A"
+                
+                # Payment methods count
+                payment_methods = passenger.get('payment_methods_count', 0)
+                
+                # Add row to table
+                table_data.append([
+                    passenger.get('id', ''),
+                    name,
+                    passenger.get('email', ''),
+                    passenger.get('phone', ''),
+                    status,
+                    total_rides,
+                    completed_rides,
+                    cancelled_rides,
+                    rating_display,
+                    payment_methods
+                ])
+            
+            # Display the table
+            click.echo(f"\nTotal passengers: {total_passengers}")
+            
+            filters_applied = []
+            if active_only:
+                filters_applied.append("active only")
+            if include_banned:
+                filters_applied.append("including banned")
+            
+            if filters_applied:
+                click.echo(f"Filters applied: {', '.join(filters_applied)}")
+                
+            click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+            
+        else:  # detailed view
+            # For each passenger, display detailed information
+            click.echo(f"\nTotal passengers: {total_passengers}")
+            
+            for i, passenger in enumerate(passengers, 1):
+                click.echo(f"\n--- Passenger {i}/{total_passengers} ---")
+                click.echo(f"ID: {passenger.get('id', '')}")
+                click.echo(f"Name: {passenger.get('first_name', '')} {passenger.get('last_name', '')}")
+                click.echo(f"Email: {passenger.get('email', '')}")
+                click.echo(f"Phone: {passenger.get('phone', '')}")
+                
+                # Status information
+                if passenger.get('is_banned', False):
+                    click.echo("Status: Banned")
+                    
+                    # Show ban details
+                    if passenger.get('permanent_ban', False):
+                        click.echo("Ban Type: Permanent")
+                    else:
+                        click.echo("Ban Type: Temporary")
+                        
+                    if passenger.get('banned_reason'):
+                        click.echo(f"Ban Reason: {passenger.get('banned_reason')}")
+                    
+                    if passenger.get('banned_at'):
+                        try:
+                            banned_date = datetime.fromisoformat(passenger.get('banned_at').replace('Z', '+00:00'))
+                            click.echo(f"Banned On: {banned_date.strftime('%B %d, %Y')}")
+                        except (ValueError, AttributeError):
+                            click.echo(f"Banned On: {passenger.get('banned_at')}")
+                    
+                    if passenger.get('banned_by'):
+                        click.echo(f"Banned By: {passenger.get('banned_by')}")
+                    
+                elif passenger.get('is_active', True):
+                    click.echo("Status: Active")
+                else:
+                    click.echo("Status: Inactive")
+                
+                # Ride statistics
+                total_rides = passenger.get('total_rides', 0)
+                completed_rides = passenger.get('completed_rides', 0)
+                cancelled_rides = passenger.get('cancelled_rides', 0)
+                
+                click.echo(f"Total Rides: {total_rides}")
+                click.echo(f"Completed Rides: {completed_rides}")
+                click.echo(f"Cancelled Rides: {cancelled_rides}")
+                
+                # Completion rate if they have rides
+                if total_rides > 0:
+                    completion_rate = (completed_rides / total_rides) * 100
+                    click.echo(f"Completion Rate: {completion_rate:.1f}%")
+                
+                # Average rating given to drivers
+                avg_rating = passenger.get('avg_rating_given')
+                if avg_rating is not None:
+                    click.echo(f"Average Rating Given: {avg_rating:.1f}/5.0")
+                else:
+                    click.echo("Average Rating Given: Not available")
+                
+                # Payment methods count
+                payment_methods = passenger.get('payment_methods_count', 0)
+                click.echo(f"Payment Methods: {payment_methods}")
+                
+                # Registration date if available
+                if passenger.get('created_at'):
+                    try:
+                        created_date = datetime.fromisoformat(passenger.get('created_at').replace('Z', '+00:00'))
+                        click.echo(f"Joined: {created_date.strftime('%B %d, %Y')}")
+                    except (ValueError, AttributeError):
+                        click.echo(f"Joined: {passenger.get('created_at')}")
                 
     except UserServiceError as e:
         click.echo(f"Error: {str(e)}", err=True)

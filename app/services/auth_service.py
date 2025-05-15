@@ -649,7 +649,7 @@ def validate_user_not_banned(token: str) -> Dict[str, Any]:
             
         # Check if user is banned
         try:
-            ban_status = UserService.get_ban_status(user['id'])
+            ban_status = UserService.get_ban_status(user['id'], user['email'])
             
             if ban_status.get('is_banned'):
                 reason = ban_status.get('reason') or "No reason provided"

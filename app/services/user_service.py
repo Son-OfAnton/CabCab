@@ -290,3 +290,86 @@ class UserService:
             raise UserServiceError(f"Failed to list banned passengers: {str(e)}")
         except AuthError as e:
             raise  # Re-throw auth errors without wrapping
+
+    @staticmethod
+    def get_driver_info(token: str, driver_id: str = None, email: str = None) -> Dict[str, Any]:
+        """
+        Get detailed information about a driver by ID or email.
+        
+        Args:
+            token: JWT token for authentication (admin only)
+            driver_id: Optional driver ID
+            email: Optional driver email
+            
+        Returns:
+            Dict: Combined driver information including contact details and vehicle
+            
+        Raises:
+            UserServiceError: If finding the driver fails
+            AuthError: If authentication or authorization fails
+        """
+        if not driver_id and not email:
+            raise ValueError("Either driver_id or email must be provided")
+        
+        try:
+            # Verify token and ensure user is an admin
+            AuthService.require_user_type(token, [UserType.ADMIN.value])
+            
+            # Find the driver user record
+            if email:
+                response = requests.get(f"{BASE_URL}/users/query?email={email}")
+                
+                if response.status_code == 404 or not response.json():
+                    raise UserServiceError(f"No user found with email {email}")
+                    
+                response.raise_for_status()
+                users = response.json()
+                user = users[0]  # Get first user with this email
+                
+            else:  # driver_id provided
+                response = requests.get(f"{BASE_URL}/users/{driver_id}")
+                
+                if response.status_code == 404:
+                    raise UserServiceError(f"No user found with ID {driver_id}")
+                    
+                response.raise_for_status()
+                user = response.json()
+            
+            # Verify the user is a driver
+            if user.get('user_type') != UserType.DRIVER.value:
+                raise UserServiceError("Specified user is not a driver")
+                
+            # Get driver-specific details
+            response = requests.get(f"{BASE_URL}/drivers/query?user_id={user['id']}")
+            response.raise_for_status()
+            drivers = response.json()
+            
+            if not drivers:
+                raise UserServiceError(f"No driver profile found for user ID {user['id']}")
+                
+            driver = drivers[0]
+            
+            # Get vehicle information if available
+            vehicle = None
+            if driver.get('vehicle_id'):
+                try:
+                    response = requests.get(f"{BASE_URL}/vehicles/{driver['vehicle_id']}")
+                    if response.status_code == 200:
+                        vehicle = response.json()
+                except Exception:
+                    # Don't fail if vehicle info can't be retrieved
+                    pass
+            
+            # Combine all information
+            result = {
+                "user": user,
+                "driver": driver,
+                "vehicle": vehicle
+            }
+            
+            return result
+            
+        except requests.RequestException as e:
+            raise UserServiceError(f"Failed to retrieve driver information: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping

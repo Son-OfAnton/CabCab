@@ -252,6 +252,32 @@ cabcab admin verify-driver <email> --verify
 cabcab admin verify-driver <email> --unverify
 ```
 
+### Ban Passenger
+
+Ban a passenger from using the service:
+
+```bash
+cabcab admin ban passenger <email> --reason "Violation of terms" --permanent
+```
+
+Unban a previously banned passenger:
+
+```bash
+cabcab admin ban unban <email>
+```
+
+List all banned passengers or those with ban history:
+
+```bash
+cabcab admin ban list --all
+```
+
+Check the ban status of a specific passenger:
+
+```bash
+cabcab admin ban status <email>
+```
+
 ## Run Arbitrary Commands
 
 Execute a CabCab command directly:

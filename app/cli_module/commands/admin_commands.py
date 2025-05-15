@@ -162,6 +162,182 @@ def driver_info(driver_id, email):
         click.echo(f"Unexpected error: {str(e)}", err=True)
 
 
+@admin_group.command(name="passenger-info", help="View contact information of a passenger by ID or email.")
+@click.option('--id', 'passenger_id', help='Passenger ID')
+@click.option('--email', help='Passenger email')
+@require_user_type([UserType.ADMIN.value])
+def passenger_info(passenger_id, email):
+    """
+    View detailed contact information of a passenger by ID or email.
+    
+    Requires admin privileges.
+    """
+    if not passenger_id and not email:
+        click.echo("Error: You must provide either --id or --email", err=True)
+        return
+    
+    token = get_token()
+    if not token:
+        click.echo("You are not signed in. Please sign in first.", err=True)
+        return
+    
+    try:
+        # Use the service to get passenger information
+        passenger = UserService.get_passenger_info(token, passenger_id, email)
+        
+        # Display the contact information
+        click.echo(f"\n--- Passenger Contact Information ---")
+        click.echo(f"ID: {passenger['id']}")
+        click.echo(f"Name: {passenger['first_name']} {passenger['last_name']}")
+        click.echo(f"Email: {passenger['email']}")
+        click.echo(f"Phone: {passenger['phone']}")
+        
+        # Show account status
+        if passenger.get('is_banned', False):
+            click.echo("Status: Banned")
+            
+            # Show ban details
+            if passenger.get('permanent_ban', False):
+                click.echo("Ban Type: Permanent")
+            else:
+                click.echo("Ban Type: Temporary")
+                
+            if passenger.get('banned_reason'):
+                click.echo(f"Ban Reason: {passenger.get('banned_reason')}")
+            
+            if passenger.get('banned_at'):
+                try:
+                    banned_date = datetime.fromisoformat(passenger.get('banned_at').replace('Z', '+00:00'))
+                    click.echo(f"Banned On: {banned_date.strftime('%B %d, %Y')}")
+                except (ValueError, AttributeError):
+                    click.echo(f"Banned On: {passenger.get('banned_at')}")
+            
+            if passenger.get('banned_by'):
+                click.echo(f"Banned By: {passenger.get('banned_by')}")
+        elif passenger.get('is_active', True):
+            click.echo("Status: Active")
+        else:
+            click.echo("Status: Inactive")
+        
+        # Show date joined
+        if passenger.get('created_at'):
+            # Try to format the date nicely if it's in ISO format
+            try:
+                created_date = datetime.fromisoformat(passenger.get('created_at').replace('Z', '+00:00'))
+                click.echo(f"Joined: {created_date.strftime('%B %d, %Y')}")
+            except (ValueError, AttributeError):
+                click.echo(f"Joined: {passenger.get('created_at')}")
+        
+        # Display payment methods if available
+        payment_methods = passenger.get('payment_methods', [])
+        if payment_methods:
+            click.echo("\n--- Payment Methods ---")
+            for i, pm in enumerate(payment_methods, 1):
+                method_type = pm.get('type', 'Unknown')
+                details = pm.get('details', {})
+                
+                click.echo(f"{i}. {method_type}")
+                
+                # Format credit card details
+                if method_type == 'CREDIT_CARD' and isinstance(details, dict):
+                    if 'card_last4' in details:
+                        click.echo(f"   Card ending in: {details.get('card_last4')}")
+                    if 'card_type' in details:
+                        click.echo(f"   Card type: {details.get('card_type')}")
+                    if 'expires' in details:
+                        click.echo(f"   Expires: {details.get('expires')}")
+                # Format other payment types as needed
+        else:
+            click.echo("\n--- Payment Methods ---")
+            click.echo("No payment methods found")
+        
+        # Display ride statistics
+        click.echo("\n--- Ride Statistics ---")
+        total_rides = passenger.get('total_rides', 0)
+        completed_rides = passenger.get('completed_rides', 0)
+        cancelled_rides = passenger.get('cancelled_rides', 0)
+        
+        click.echo(f"Total Rides: {total_rides}")
+        click.echo(f"Completed Rides: {completed_rides}")
+        click.echo(f"Cancelled Rides: {cancelled_rides}")
+        
+        # Completion rate if they have rides
+        if total_rides > 0:
+            completion_rate = (completed_rides / total_rides) * 100
+            click.echo(f"Completion Rate: {completion_rate:.1f}%")
+        
+        # Average rating given to drivers
+        avg_rating = passenger.get('avg_rating_given')
+        if avg_rating is not None:
+            click.echo(f"Average Rating Given: {avg_rating:.1f}/5.0")
+        else:
+            click.echo("Average Rating Given: Not available")
+            
+        # Display status distribution
+        statuses = passenger.get('ride_statuses', {})
+        if statuses:
+            click.echo("\n--- Ride Status Distribution ---")
+            for status, count in sorted(statuses.items()):
+                click.echo(f"{status}: {count}")
+        
+        # Display recent rides if available
+        recent_rides = passenger.get('recent_rides', [])
+        if recent_rides:
+            click.echo("\n--- Recent Rides ---")
+            for i, ride in enumerate(recent_rides, 1):
+                ride_id = ride.get('id', 'Unknown')
+                status = ride.get('status', 'Unknown')
+                
+                # Format date
+                created_at = ride.get('created_at', '')
+                try:
+                    ride_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    date_display = ride_date.strftime('%Y-%m-%d %H:%M')
+                except (ValueError, AttributeError):
+                    date_display = created_at
+                
+                # Try to get pickup/dropoff locations
+                pickup_loc = "Unknown"
+                dropoff_loc = "Unknown"
+                
+                if ride.get('pickup_location_id'):
+                    try:
+                        loc_response = requests.get(f"http://localhost:3000/locations/{ride.get('pickup_location_id')}")
+                        if loc_response.status_code == 200:
+                            location = loc_response.json()
+                            pickup_loc = location.get('address', 'Unknown')
+                    except Exception:
+                        pass
+                        
+                if ride.get('dropoff_location_id'):
+                    try:
+                        loc_response = requests.get(f"http://localhost:3000/locations/{ride.get('dropoff_location_id')}")
+                        if loc_response.status_code == 200:
+                            location = loc_response.json()
+                            dropoff_loc = location.get('address', 'Unknown')
+                    except Exception:
+                        pass
+                
+                click.echo(f"{i}. Ride ID: {ride_id}")
+                click.echo(f"   Date: {date_display}")
+                click.echo(f"   Status: {status}")
+                click.echo(f"   Pickup: {pickup_loc}")
+                click.echo(f"   Dropoff: {dropoff_loc}")
+                
+                # Show rating if available
+                if ride.get('driver_rating') is not None:
+                    click.echo(f"   Rating Given: {ride.get('driver_rating')}/5.0")
+                
+                # Add some space between rides
+                if i < len(recent_rides):
+                    click.echo("")
+        
+    except UserServiceError as e:
+        click.echo(f"Error: {str(e)}", err=True)
+    except Exception as e:
+        click.echo(f"Unexpected error: {str(e)}", err=True)
+
+
 @admin_group.command(name="list-drivers", help="List all drivers registered on the platform.")
 @click.option('--active-only', is_flag=True, help='Show only active drivers')
 @click.option('--verified-only', is_flag=True, help='Show only verified drivers')
@@ -480,3 +656,4 @@ def list_passengers(active_only, include_banned, output_format):
         click.echo(f"Error: {str(e)}", err=True)
     except Exception as e:
         click.echo(f"Unexpected error: {str(e)}", err=True)
+

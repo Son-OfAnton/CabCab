@@ -614,3 +614,507 @@ class UserService:
             raise UserServiceError(f"Failed to list passengers: {str(e)}")
         except AuthError:
             raise  # Re-throw auth errors without wrapping
+
+
+    @staticmethod
+    def get_passenger_info(token: str, passenger_id: str = None, email: str = None) -> Dict[str, Any]:
+        """
+        Get detailed information about a passenger by ID or email.
+        
+        Args:
+            token: JWT token for authentication (admin only)
+            passenger_id: Optional passenger ID
+            email: Optional passenger email
+            
+        Returns:
+            Dict: Detailed passenger information
+            
+        Raises:
+            UserServiceError: If finding the passenger fails
+            AuthError: If authentication or authorization fails
+        """
+        if not passenger_id and not email:
+            raise ValueError("Either passenger_id or email must be provided")
+        
+        try:
+            # Verify token and ensure user is an admin
+            AuthService.require_user_type(token, [UserType.ADMIN.value])
+            
+            # Find the passenger user record
+            if email:
+                response = requests.get(f"{BASE_URL}/users/query?email={email}")
+                
+                if response.status_code == 404 or not response.json():
+                    raise UserServiceError(f"No user found with email {email}")
+                    
+                response.raise_for_status()
+                users = response.json()
+                user = users[0]  # Get first user with this email
+                
+            else:  # passenger_id provided
+                response = requests.get(f"{BASE_URL}/users/{passenger_id}")
+                
+                if response.status_code == 404:
+                    raise UserServiceError(f"No user found with ID {passenger_id}")
+                    
+                response.raise_for_status()
+                user = response.json()
+            
+            # Verify the user is a passenger
+            if user.get('user_type') != UserType.PASSENGER.value:
+                raise UserServiceError("Specified user is not a passenger")
+            
+            # Prepare the passenger info object
+            passenger_info = {
+                "id": user.get("id"),
+                "first_name": user.get("first_name", ""),
+                "last_name": user.get("last_name", ""),
+                "email": user.get("email", ""),
+                "phone": user.get("phone", ""),
+                "is_active": user.get("is_active", True),
+                "is_banned": user.get("is_banned", False),
+                "created_at": user.get("created_at", ""),
+                "updated_at": user.get("updated_at", ""),
+            }
+            
+            # Add ban information if available
+            if passenger_info["is_banned"]:
+                passenger_info["banned_at"] = user.get("banned_at", "")
+                passenger_info["banned_reason"] = user.get("banned_reason", "No reason provided")
+                passenger_info["permanent_ban"] = user.get("permanent_ban", False)
+                
+                # If there's a banned_by ID, try to resolve it to an admin name
+                if user.get("banned_by"):
+                    try:
+                        admin_response = requests.get(f"{BASE_URL}/users/{user.get('banned_by')}")
+                        if admin_response.status_code == 200:
+                            admin = admin_response.json()
+                            passenger_info["banned_by"] = f"{admin.get('first_name', '')} {admin.get('last_name', '')}".strip()
+                        else:
+                            passenger_info["banned_by"] = user.get("banned_by")
+                    except Exception:
+                        passenger_info["banned_by"] = user.get("banned_by")
+            
+            # Try to get payment methods
+            try:
+                payments_response = requests.get(f"{BASE_URL}/payments/query?user_id={user['id']}")
+                if payments_response.status_code == 200:
+                    payments = payments_response.json()
+                    
+                    # Extract unique payment methods
+                    payment_methods = []
+                    seen_methods = set()
+                    
+                    for p in payments:
+                        method = p.get("payment_method")
+                        details = p.get("payment_details", {})
+                        
+                        # Create a unique identifier for this payment method
+                        if isinstance(details, dict) and "card_last4" in details:
+                            # For credit cards, use last 4 digits as identifier
+                            method_id = f"{method}_{details.get('card_last4')}"
+                        else:
+                            # For other types, use the method type
+                            method_id = method
+                        
+                        if method_id not in seen_methods:
+                            seen_methods.add(method_id)
+                            payment_methods.append({
+                                "type": method,
+                                "details": details
+                            })
+                    
+                    passenger_info["payment_methods"] = payment_methods
+                else:
+                    passenger_info["payment_methods"] = []
+            except Exception:
+                passenger_info["payment_methods"] = []
+                
+            # Try to get ride statistics
+            try:
+                rides_response = requests.get(f"{BASE_URL}/rides/query?user_id={user['id']}")
+                if rides_response.status_code == 200:
+                    rides = rides_response.json()
+                    
+                    # Basic statistics
+                    passenger_info["total_rides"] = len(rides)
+                    
+                    # Process ride statuses
+                    statuses = {}
+                    for r in rides:
+                        status = r.get("status", "UNKNOWN")
+                        statuses[status] = statuses.get(status, 0) + 1
+                    
+                    passenger_info["ride_statuses"] = statuses
+                    
+                    # Completed rides
+                    completed_rides = [r for r in rides if r.get("status", "") == "COMPLETED"]
+                    passenger_info["completed_rides"] = len(completed_rides)
+                    
+                    # Cancelled rides
+                    cancelled_rides = [r for r in rides if r.get("status", "") == "CANCELLED"]
+                    passenger_info["cancelled_rides"] = len(cancelled_rides)
+                    
+                    # Calculate average rating given to drivers
+                    ratings = [float(r.get("driver_rating", 0)) for r in rides 
+                             if r.get("driver_rating") is not None and r.get("driver_rating") > 0]
+                    
+                    if ratings:
+                        passenger_info["avg_rating_given"] = sum(ratings) / len(ratings)
+                        passenger_info["num_ratings_given"] = len(ratings)
+                    else:
+                        passenger_info["avg_rating_given"] = None
+                        passenger_info["num_ratings_given"] = 0
+                    
+                    # Get the most recent rides
+                    recent_rides = sorted(rides, key=lambda r: r.get("created_at", ""), reverse=True)[:5]
+                    passenger_info["recent_rides"] = recent_rides
+                else:
+                    passenger_info["total_rides"] = 0
+                    passenger_info["completed_rides"] = 0
+                    passenger_info["cancelled_rides"] = 0
+                    passenger_info["avg_rating_given"] = None
+                    passenger_info["ride_statuses"] = {}
+                    passenger_info["recent_rides"] = []
+            except Exception:
+                passenger_info["total_rides"] = 0
+                passenger_info["completed_rides"] = 0
+                passenger_info["cancelled_rides"] = 0
+                passenger_info["avg_rating_given"] = None
+                passenger_info["ride_statuses"] = {}
+                passenger_info["recent_rides"] = []
+            
+            return passenger_info
+            
+        except requests.RequestException as e:
+            raise UserServiceError(f"Failed to retrieve passenger information: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping
+
+
+    @staticmethod
+    def ban_driver(token: str, user_email: str, reason: str = None, permanent: bool = False) -> Dict[str, Any]:
+        """
+        Ban a driver from using the service.
+        
+        Args:
+            token: JWT token for authentication (admin only)
+            user_email: Email of the driver to ban
+            reason: Optional reason for the ban
+            permanent: Whether the ban is permanent
+            
+        Returns:
+            Dict: The banned driver data
+            
+        Raises:
+            UserServiceError: If banning the driver fails
+            AuthError: If authentication or authorization fails
+        """
+        try:
+            # Verify token and ensure user is an admin
+            admin_user = AuthService.require_user_type(token, [UserType.ADMIN.value])
+            
+            # Find driver by email
+            response = requests.get(f"{BASE_URL}/users/query?email={user_email}")
+            
+            if response.status_code == 404 or not response.json():
+                raise UserServiceError(f"User with email {user_email} not found")
+                
+            response.raise_for_status()
+            users = response.json()
+            
+            if not users:
+                raise UserServiceError(f"User with email {user_email} not found")
+                
+            driver = users[0]
+            
+            # Verify the user is a driver
+            if driver.get('user_type') != UserType.DRIVER.value:
+                raise UserServiceError(f"User with email {user_email} is not a driver")
+                
+            # Update ban status
+            driver['is_banned'] = True
+            driver['banned_reason'] = reason
+            driver['banned_at'] = datetime.now().isoformat()
+            driver['banned_by'] = admin_user['id']
+            driver['permanent_ban'] = permanent
+            driver['updated_at'] = datetime.now().isoformat()
+            
+            # Save the updated driver user record
+            response = requests.put(f"{BASE_URL}/users/{driver['id']}", json=driver)
+            response.raise_for_status()
+            
+            # Also update driver record in drivers collection if it exists
+            try:
+                driver_response = requests.get(f"{BASE_URL}/drivers/query?user_id={driver['id']}")
+                if driver_response.status_code == 200 and driver_response.json():
+                    driver_record = driver_response.json()[0]
+                    driver_record['is_active'] = False
+                    driver_record['is_available'] = False
+                    driver_record['is_banned'] = True
+                    driver_record['updated_at'] = datetime.now().isoformat()
+                    
+                    # Save the updated driver record
+                    driver_update_response = requests.put(
+                        f"{BASE_URL}/drivers/{driver_record['id']}", json=driver_record)
+                    driver_update_response.raise_for_status()
+            except Exception:
+                # If we can't update the driver record, that's ok - the user record is more important
+                pass
+            
+            return response.json()
+            
+        except requests.RequestException as e:
+            raise UserServiceError(f"Failed to ban driver: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping
+    
+    @staticmethod
+    def unban_driver(token: str, user_email: str) -> Dict[str, Any]:
+        """
+        Unban a previously banned driver.
+        
+        Args:
+            token: JWT token for authentication (admin only)
+            user_email: Email of the driver to unban
+            
+        Returns:
+            Dict: The unbanned driver data
+            
+        Raises:
+            UserServiceError: If unbanning the driver fails
+            AuthError: If authentication or authorization fails
+        """
+        try:
+            # Verify token and ensure user is an admin
+            admin_user = AuthService.require_user_type(token, [UserType.ADMIN.value])
+            
+            # Find driver by email
+            response = requests.get(f"{BASE_URL}/users/query?email={user_email}")
+            
+            if response.status_code == 404 or not response.json():
+                raise UserServiceError(f"User with email {user_email} not found")
+                
+            response.raise_for_status()
+            users = response.json()
+            
+            if not users:
+                raise UserServiceError(f"User with email {user_email} not found")
+                
+            driver = users[0]
+            
+            # Verify the user is a driver
+            if driver.get('user_type') != UserType.DRIVER.value:
+                raise UserServiceError(f"User with email {user_email} is not a driver")
+                
+            # Check if driver is banned
+            if not driver.get('is_banned'):
+                raise UserServiceError(f"Driver with email {user_email} is not currently banned")
+                
+            # Update ban status
+            driver['is_banned'] = False
+            driver['unbanned_at'] = datetime.now().isoformat()
+            driver['unbanned_by'] = admin_user['id']
+            driver['updated_at'] = datetime.now().isoformat()
+            
+            # Save the updated driver
+            response = requests.put(f"{BASE_URL}/users/{driver['id']}", json=driver)
+            response.raise_for_status()
+            
+            # Also update driver record in drivers collection if it exists
+            try:
+                driver_response = requests.get(f"{BASE_URL}/drivers/query?user_id={driver['id']}")
+                if driver_response.status_code == 200 and driver_response.json():
+                    driver_record = driver_response.json()[0]
+                    driver_record['is_active'] = True  # Reactivate the driver
+                    driver_record['is_banned'] = False
+                    driver_record['updated_at'] = datetime.now().isoformat()
+                    
+                    # Save the updated driver record
+                    driver_update_response = requests.put(
+                        f"{BASE_URL}/drivers/{driver_record['id']}", json=driver_record)
+                    driver_update_response.raise_for_status()
+            except Exception:
+                # If we can't update the driver record, that's ok - the user record is more important
+                pass
+            
+            return response.json()
+            
+        except requests.RequestException as e:
+            raise UserServiceError(f"Failed to unban driver: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping
+    
+    @staticmethod
+    def list_banned_drivers(token: str, active_only: bool = True) -> List[Dict[str, Any]]:
+        """
+        List all drivers with active bans or ban history.
+        
+        Args:
+            token: JWT token for authentication (admin only)
+            active_only: If True, only currently banned drivers are returned;
+                         if False, also includes drivers with ban history
+            
+        Returns:
+            List[Dict]: List of banned drivers
+            
+        Raises:
+            UserServiceError: If listing banned drivers fails
+            AuthError: If authentication or authorization fails
+        """
+        try:
+            # Verify token and ensure user is an admin
+            AuthService.require_user_type(token, [UserType.ADMIN.value])
+            
+            # Get all users
+            response = requests.get(f"{BASE_URL}/users")
+            
+            if response.status_code == 404:
+                return []
+                
+            response.raise_for_status()
+            users = response.json()
+            
+            # Filter to drivers only
+            drivers = [u for u in users if u.get('user_type') == UserType.DRIVER.value]
+            
+            # Filter to banned drivers
+            if active_only:
+                banned_drivers = [d for d in drivers if d.get('is_banned', False)]
+            else:
+                # Include drivers that have ban history (banned_at exists)
+                banned_drivers = [d for d in drivers if 
+                                  d.get('is_banned', False) or 
+                                  d.get('banned_at') is not None]
+            
+            # Enrich driver data with additional information
+            enriched_banned_drivers = []
+            for driver in banned_drivers:
+                # Add driver information from driver record if available
+                try:
+                    driver_response = requests.get(f"{BASE_URL}/drivers/query?user_id={driver['id']}")
+                    if driver_response.status_code == 200 and driver_response.json():
+                        driver_record = driver_response.json()[0]
+                        driver['license_number'] = driver_record.get('license_number')
+                        driver['rating'] = driver_record.get('rating')
+                except Exception:
+                    # If we can't get driver record, just continue
+                    pass
+                
+                # Add vehicle information if available
+                try:
+                    vehicle_response = requests.get(f"{BASE_URL}/vehicles/query?driver_id={driver['id']}")
+                    if vehicle_response.status_code == 200 and vehicle_response.json():
+                        vehicle = vehicle_response.json()[0]
+                        driver['vehicle'] = f"{vehicle.get('year', '')} {vehicle.get('make', '')} {vehicle.get('model', '')}"
+                        driver['license_plate'] = vehicle.get('license_plate')
+                except Exception:
+                    # If we can't get vehicle information, just continue
+                    pass
+                
+                enriched_banned_drivers.append(driver)
+            
+            return enriched_banned_drivers
+            
+        except requests.RequestException as e:
+            raise UserServiceError(f"Failed to list banned drivers: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping
+            
+    @staticmethod
+    def get_driver_ban_status(token: str, user_email: str) -> Dict[str, Any]:
+        """
+        Get the ban status of a driver.
+        
+        Args:
+            token: JWT token for authentication (admin only)
+            user_email: Email of the driver to check
+            
+        Returns:
+            Dict: Ban status information
+            
+        Raises:
+            UserServiceError: If getting ban status fails
+            AuthError: If authentication or authorization fails
+        """
+        try:
+            # Verify token and ensure user is an admin
+            AuthService.require_user_type(token, [UserType.ADMIN.value])
+            
+            # Find driver by email
+            response = requests.get(f"{BASE_URL}/users/query?email={user_email}")
+            
+            if response.status_code == 404 or not response.json():
+                raise UserServiceError(f"User with email {user_email} not found")
+                
+            response.raise_for_status()
+            users = response.json()
+            
+            if not users:
+                raise UserServiceError(f"User with email {user_email} not found")
+                
+            driver = users[0]
+            
+            # Verify the user is a driver
+            if driver.get('user_type') != UserType.DRIVER.value:
+                raise UserServiceError(f"User with email {user_email} is not a driver")
+                
+            # Check current ban status
+            is_banned = driver.get('is_banned', False)
+            
+            # Extract ban information if available
+            ban_info = {
+                'is_banned': is_banned,
+                'user_id': driver['id'],
+                'email': driver['email'],
+                'name': f"{driver.get('first_name', '')} {driver.get('last_name', '')}".strip()
+            }
+            
+            if is_banned:
+                ban_info.update({
+                    'banned_at': driver.get('banned_at'),
+                    'banned_reason': driver.get('banned_reason'),
+                    'permanent_ban': driver.get('permanent_ban', False)
+                })
+                
+                # Try to get banned_by admin details
+                if driver.get('banned_by'):
+                    try:
+                        admin_response = requests.get(f"{BASE_URL}/users/{driver.get('banned_by')}")
+                        if admin_response.status_code == 200:
+                            admin = admin_response.json()
+                            ban_info['banned_by'] = admin.get('id')
+                            ban_info['banned_by_name'] = f"{admin.get('first_name', '')} {admin.get('last_name', '')}".strip()
+                            ban_info['banned_by_email'] = admin.get('email')
+                    except Exception:
+                        # If we can't get admin details, just continue
+                        pass
+                        
+            elif driver.get('banned_at') is not None:
+                # Include historical ban info for previously banned drivers
+                ban_info.update({
+                    'previously_banned': True,
+                    'banned_at': driver.get('banned_at'),
+                    'unbanned_at': driver.get('unbanned_at'),
+                    'banned_reason': driver.get('banned_reason'),
+                })
+                
+                # Try to get unbanned_by admin details
+                if driver.get('unbanned_by'):
+                    try:
+                        admin_response = requests.get(f"{BASE_URL}/users/{driver.get('unbanned_by')}")
+                        if admin_response.status_code == 200:
+                            admin = admin_response.json()
+                            ban_info['unbanned_by'] = admin.get('id')
+                            ban_info['unbanned_by_name'] = f"{admin.get('first_name', '')} {admin.get('last_name', '')}".strip()
+                            ban_info['unbanned_by_email'] = admin.get('email')
+                    except Exception:
+                        # If we can't get admin details, just continue
+                        pass
+                
+            return ban_info
+            
+        except requests.RequestException as e:
+            raise UserServiceError(f"Failed to get ban status: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping

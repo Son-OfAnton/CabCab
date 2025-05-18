@@ -5,7 +5,8 @@ import click
 import requests
 from tabulate import tabulate
 
-from app.services.auth_service import UserType
+from app.services.auth_service import AuthError, UserType
+from app.services.ride_service import RideService, RideServiceError
 from app.services.user_service import UserService, UserServiceError
 from app.cli_module.utils import get_token, require_user_type
 from app.cli_module.commands.admin_ban_commands import ban_group
@@ -657,3 +658,225 @@ def list_passengers(active_only, include_banned, output_format):
     except Exception as e:
         click.echo(f"Unexpected error: {str(e)}", err=True)
 
+
+@admin_group.command(name="driver-rides", help="View all rides a driver has accepted")
+@click.argument("email", metavar="EMAIL")
+@click.option("--status", help="Filter by ride status (e.g., COMPLETED, CANCELLED)")
+@click.option("--format", "output_format", type=click.Choice(['table', 'detailed'], case_sensitive=False), 
+              default='table', help='Output format (table or detailed)')
+@require_user_type([UserType.ADMIN.value])
+def driver_rides(email, status, output_format):
+    """
+    View all rides a driver has accepted or completed.
+    
+    EMAIL: The email address of the driver to check.
+    
+    Requires admin privileges.
+    """
+    token = get_token()
+    if not token:
+        click.echo("You are not signed in. Please sign in first.", err=True)
+        return
+    
+    try:
+        # Get driver rides using the RideService
+        rides = RideService.get_driver_rides(token, email, status)
+        
+        if not rides:
+            status_msg = f" with status '{status}'" if status else ""
+            click.echo(f"No rides found for driver with email {email}{status_msg}.")
+            return
+        
+        # Get driver details
+        response = requests.get(f"http://localhost:3000/users/query?email={email}")
+        driver = response.json()[0] if response.status_code == 200 and response.json() else None
+        
+        # Display driver info header
+        if driver:
+            click.echo(f"\nRides for driver: {driver.get('first_name')} {driver.get('last_name')} ({email})")
+        else:
+            click.echo(f"\nRides for driver: {email}")
+            
+        # Status filter info display
+        if status:
+            click.echo(f"Filtered by status: {status}")
+        
+        click.echo(f"Total rides found: {len(rides)}")
+        
+        # Format the results based on output_format
+        if output_format == 'table':
+            # Prepare table data
+            table_data = []
+            headers = ["ID", "Date", "Status", "Passenger", "Pickup", "Dropoff", "Fare", "Rating"]
+            
+            for ride in rides:
+                # Format ride information for the table
+                
+                # Format the request time
+                ride_date = "Unknown"
+                if ride.get('request_time'):
+                    try:
+                        dt = datetime.fromisoformat(ride.get('request_time').replace('Z', '+00:00'))
+                        ride_date = dt.strftime('%Y-%m-%d %H:%M')
+                    except (ValueError, TypeError):
+                        ride_date = ride.get('request_time')
+                
+                # Format passenger info
+                passenger_info = "Unknown"
+                if ride.get('passenger'):
+                    passenger_info = ride.get('passenger').get('name', "Unknown Passenger")
+                
+                # Format pickup and dropoff addresses
+                pickup_address = "Unknown"
+                if ride.get('pickup_location') and ride.get('pickup_location').get('address'):
+                    pickup_location = ride.get('pickup_location')
+                    pickup_address = f"{pickup_location.get('address')}, {pickup_location.get('city')}"
+                
+                dropoff_address = "Unknown"
+                if ride.get('dropoff_location') and ride.get('dropoff_location').get('address'):
+                    dropoff_location = ride.get('dropoff_location')
+                    dropoff_address = f"{dropoff_location.get('address')}, {dropoff_location.get('city')}"
+                
+                # Format fare information
+                if ride.get('status') == "COMPLETED" and ride.get('actual_fare') is not None:
+                    fare = f"${float(ride.get('actual_fare')):.2f}"
+                elif ride.get('estimated_fare') is not None:
+                    fare = f"${float(ride.get('estimated_fare')):.2f} (est.)"
+                else:
+                    fare = "Unknown"
+                
+                # Format rating
+                rating = f"{ride.get('rating')}/5" if ride.get('rating') is not None else "Not rated"
+                
+                # Add row to table
+                table_data.append([
+                    ride.get('id', ''),
+                    ride_date,
+                    ride.get('status', 'Unknown'),
+                    passenger_info,
+                    pickup_address,
+                    dropoff_address,
+                    fare,
+                    rating
+                ])
+            
+            # Display the table
+            click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+            
+        else:  # detailed view
+            # For each ride, display detailed information
+            for i, ride in enumerate(rides, 1):
+                click.echo(f"\n--- Ride {i}/{len(rides)} ---")
+                click.echo(f"ID: {ride.get('id', 'Unknown')}")
+                click.echo(f"Status: {ride.get('status', 'Unknown')}")
+                
+                # Format date/time information
+                if ride.get('request_time'):
+                    try:
+                        dt = datetime.fromisoformat(ride.get('request_time').replace('Z', '+00:00'))
+                        click.echo(f"Request Time: {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                    except (ValueError, TypeError):
+                        click.echo(f"Request Time: {ride.get('request_time')}")
+                
+                # Show passenger information
+                click.echo("\nPassenger Information:")
+                if ride.get('passenger'):
+                    passenger = ride.get('passenger')
+                    click.echo(f"  Name: {passenger.get('name', 'Unknown')}")
+                    click.echo(f"  Email: {passenger.get('email', 'Not provided')}")
+                    click.echo(f"  Phone: {passenger.get('phone', 'Not provided')}")
+                else:
+                    click.echo("  Passenger details not available")
+                
+                # Show vehicle information if available
+                if ride.get('vehicle'):
+                    vehicle = ride.get('vehicle')
+                    click.echo("\nVehicle Information:")
+                    click.echo(f"  Vehicle: {vehicle.get('year', '')} {vehicle.get('make', '')} {vehicle.get('model', '')}")
+                    click.echo(f"  Color: {vehicle.get('color', 'Not provided')}")
+                    click.echo(f"  License Plate: {vehicle.get('license_plate', 'Not provided')}")
+                
+                # Show pickup and dropoff locations
+                click.echo("\nPickup Location:")
+                if ride.get('pickup_location'):
+                    pickup = ride.get('pickup_location')
+                    click.echo(f"  Address: {pickup.get('address', 'Not provided')}")
+                    click.echo(f"  City: {pickup.get('city', 'Not provided')}, " +
+                             f"{pickup.get('state', '')} {pickup.get('postal_code', '')}")
+                    if pickup.get('latitude') and pickup.get('longitude'):
+                        click.echo(f"  Coordinates: {pickup.get('latitude')}, {pickup.get('longitude')}")
+                else:
+                    click.echo("  Location details not available")
+                
+                click.echo("\nDropoff Location:")
+                if ride.get('dropoff_location'):
+                    dropoff = ride.get('dropoff_location')
+                    click.echo(f"  Address: {dropoff.get('address', 'Not provided')}")
+                    click.echo(f"  City: {dropoff.get('city', 'Not provided')}, " +
+                             f"{dropoff.get('state', '')} {dropoff.get('postal_code', '')}")
+                    if dropoff.get('latitude') and dropoff.get('longitude'):
+                        click.echo(f"  Coordinates: {dropoff.get('latitude')}, {dropoff.get('longitude')}")
+                else:
+                    click.echo("  Location details not available")
+                
+                # Distance and duration
+                if ride.get('distance'):
+                    click.echo(f"\nDistance: {ride.get('distance')} km")
+                if ride.get('duration'):
+                    click.echo(f"Estimated Duration: {ride.get('duration')} minutes")
+                
+                # Show fare information
+                click.echo("\nFare Details:")
+                if ride.get('estimated_fare') is not None:
+                    click.echo(f"  Estimated Fare: ${float(ride.get('estimated_fare')):.2f}")
+                
+                if ride.get('actual_fare') is not None:
+                    click.echo(f"  Actual Fare: ${float(ride.get('actual_fare')):.2f}")
+                
+                if ride.get('payment'):
+                    payment = ride.get('payment')
+                    click.echo(f"  Payment Method: {payment.get('payment_method', 'Unknown')}")
+                    click.echo(f"  Payment Status: {payment.get('status', 'Unknown')}")
+                
+                # If ride completed, show rating and feedback
+                if ride.get('status') == "COMPLETED":
+                    click.echo("\nFeedback from Passenger:")
+                    if ride.get('rating') is not None:
+                        click.echo(f"  Rating: {ride.get('rating')}/5")
+                    else:
+                        click.echo("  Rating: Not provided")
+                    
+                    if ride.get('feedback'):
+                        click.echo(f"  Feedback: \"{ride.get('feedback')}\"")
+                
+                # Show earnings information (for completed rides)
+                if ride.get('status') == "COMPLETED" and ride.get('actual_fare') is not None:
+                    # In a real app, we would calculate the driver's earnings based on the fare
+                    # This is a simplified example assuming the driver gets 80% of the fare
+                    driver_earnings = float(ride.get('actual_fare')) * 0.8
+                    click.echo(f"\nDriver Earnings: ${driver_earnings:.2f}")
+                
+                # Show timestamps for ride lifecycle
+                click.echo("\nTimestamps:")
+                if ride.get('start_time'):
+                    try:
+                        dt = datetime.fromisoformat(ride.get('start_time').replace('Z', '+00:00'))
+                        click.echo(f"  Started: {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                    except (ValueError, TypeError):
+                        click.echo(f"  Started: {ride.get('start_time')}")
+                
+                if ride.get('end_time'):
+                    try:
+                        dt = datetime.fromisoformat(ride.get('end_time').replace('Z', '+00:00'))
+                        click.echo(f"  Ended: {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                    except (ValueError, TypeError):
+                        click.echo(f"  Ended: {ride.get('end_time')}")
+                
+                # Add divider between rides
+                if i < len(rides):
+                    click.echo("\n" + "-" * 50)
+                
+    except (RideServiceError, UserServiceError, AuthError) as e:
+        click.echo(f"Error: {str(e)}", err=True)
+    except Exception as e:
+        click.echo(f"Unexpected error: {str(e)}", err=True)

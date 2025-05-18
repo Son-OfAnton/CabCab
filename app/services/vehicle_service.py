@@ -264,3 +264,84 @@ class VehicleService:
             
         except requests.RequestException as e:
             raise VehicleServiceError(f"Failed to delete vehicle: {str(e)}")
+        
+    # New method to add to VehicleService class
+
+    @staticmethod
+    def find_vehicle_by_license_plate(token: str, license_plate: str) -> Dict[str, Any]:
+        """
+        Find a vehicle by its license plate (admin function).
+        
+        Args:
+            token: JWT token for authentication (admin only)
+            license_plate: The license plate to search for
+            
+        Returns:
+            Dict: Vehicle data with driver details if found
+            
+        Raises:
+            VehicleServiceError: If search fails or no vehicle found
+            AuthError: If authentication or authorization fails
+        """
+        try:
+            # Verify token and ensure user is an admin
+            user = AuthService.require_user_type(token, [UserType.ADMIN.value])
+            
+            # Sanitize the license plate for search
+            # Remove spaces, convert to uppercase
+            sanitized_plate = license_plate.strip().replace(" ", "").upper()
+            
+            if not sanitized_plate:
+                raise VehicleServiceError("License plate cannot be empty")
+            
+            # Query the database for vehicle with matching license plate
+            # Use fuzzy matching for more flexible search
+            response = requests.get(f"{BASE_URL}/vehicles")
+            
+            if response.status_code != 200:
+                raise VehicleServiceError("Failed to retrieve vehicles")
+                
+            vehicles = response.json()
+            
+            # Filter vehicles to find matching license plates
+            # Normalize license plates for comparison by removing spaces and case sensitivity
+            matched_vehicles = []
+            for vehicle in vehicles:
+                if 'license_plate' in vehicle:
+                    normalized_plate = vehicle['license_plate'].replace(" ", "").upper()
+                    # Check if the normalized plate contains or matches the search term
+                    if sanitized_plate in normalized_plate or normalized_plate in sanitized_plate:
+                        matched_vehicles.append(vehicle)
+            
+            if not matched_vehicles:
+                raise VehicleServiceError(f"No vehicle found with license plate similar to '{license_plate}'")
+                
+            # Get driver details for each matched vehicle
+            for vehicle in matched_vehicles:
+                if vehicle.get('driver_id'):
+                    try:
+                        driver_response = requests.get(f"{BASE_URL}/users/{vehicle['driver_id']}")
+                        if driver_response.status_code == 200:
+                            driver = driver_response.json()
+                            # Add basic driver info to the vehicle data
+                            vehicle['driver'] = {
+                                'id': driver.get('id'),
+                                'name': f"{driver.get('first_name', '')} {driver.get('last_name', '')}".strip(),
+                                'email': driver.get('email'),
+                                'phone': driver.get('phone'),
+                                'is_verified': driver.get('is_verified', False),
+                                'is_active': driver.get('is_active', True)
+                            }
+                    except Exception:
+                        # If we can't get driver details, continue without them
+                        pass
+            
+            return {
+                'vehicles': matched_vehicles,
+                'count': len(matched_vehicles)
+            }
+            
+        except requests.RequestException as e:
+            raise VehicleServiceError(f"Failed to search for vehicle: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping

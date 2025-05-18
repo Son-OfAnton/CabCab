@@ -421,36 +421,478 @@ class PaymentService:
             
         except requests.RequestException as e:
             raise PaymentServiceError(f"Failed to remove payment method: {str(e)}")
-
-
-def _detect_card_type(card_number: str) -> str:
-    """
-    Detect credit card type based on the card number.
-    
-    Args:
-        card_number: Credit card number
         
-    Returns:
-        str: Card type (VISA, MASTERCARD, AMEX, etc.)
-    """
-    # Remove spaces and dashes
-    number = card_number.replace(" ", "").replace("-", "")
-    
-    # Check for VISA
-    if number.startswith('4'):
-        return "VISA"
-    
-    # Check for Mastercard
-    if number.startswith('5') and 1 <= int(number[1]) <= 5:
-        return "MASTERCARD"
-    
-    # Check for American Express
-    if number.startswith(('34', '37')):
-        return "AMEX"
-    
-    # Check for Discover
-    if number.startswith('6'):
-        return "DISCOVER"
-    
-    # Default
-    return "UNKNOWN"
+    # Add these methods to the PaymentService class
+
+    @staticmethod
+    def add_driver_payment_method(token: str, payment_type: str, payment_details: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Add a new payment method for a driver to receive earnings.
+        
+        Args:
+            token: JWT token for authentication (drivers only)
+            payment_type: Type of payment method (BANK_ACCOUNT, PAYPAL)
+            payment_details: Details for the payment method
+            
+        Returns:
+            Dict: The added payment method
+            
+        Raises:
+            PaymentServiceError: If payment method addition fails
+            AuthError: If authentication fails
+        """
+        try:
+            # Verify token and ensure user is a driver
+            user = AuthService.require_user_type(token, [UserType.DRIVER.value])
+            
+            # Sanitize payment details before processing
+            sanitized_details = _sanitize_payment_details(payment_type, payment_details)
+            
+            # Validate payment details based on type
+            if payment_type == "BANK_ACCOUNT":
+                # Validate bank account details
+                if not sanitized_details.get("account_number") or \
+                not sanitized_details.get("routing_number") or \
+                not sanitized_details.get("account_holder_name"):
+                    raise PaymentServiceError("Incomplete bank account details")
+                    
+                # Format account number for display (masked)
+                account_number = sanitized_details["account_number"]
+                masked_account = f"****{account_number[-4:]}" if len(account_number) >= 4 else "****"
+                
+                if sanitized_details.get("bank_name"):
+                    display_name = f"{sanitized_details['bank_name']} - {masked_account}"
+                else:
+                    display_name = f"Bank Account - {masked_account}"
+                    
+            elif payment_type == "PAYPAL":
+                # Validate PayPal details
+                if not sanitized_details.get("email"):
+                    raise PaymentServiceError("PayPal email address is required")
+                    
+                # Create display name for PayPal
+                display_name = f"PayPal - {sanitized_details['email']}"
+                
+            else:
+                raise PaymentServiceError(f"Unsupported payment method type: {payment_type}")
+                
+            # Create a new payment method token
+            payment_method_id = str(uuid4())
+            
+            # In a real implementation, we would tokenize the sensitive payment data
+            # and store only the token. For this example, we'll simulate that process.
+            token_data = {
+                "tokenized": True,
+                "created": datetime.now().isoformat()
+            }
+            
+            # Add non-sensitive fields directly
+            for key, value in sanitized_details.items():
+                if key not in ["account_number", "routing_number", "cvv"]:
+                    token_data[key] = value
+            
+            # Create the payment method object
+            new_payment_method = {
+                "id": payment_method_id,
+                "user_id": user["id"],
+                "payment_type": payment_type,
+                "token": token_data,
+                "display_name": display_name,
+                "is_default": False,  # It will be set to default if it's the first one
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            }
+            
+            # Get existing driver payment methods from user data
+            driver_data = _get_driver_data_from_user(user["id"])
+            existing_payment_methods = driver_data.get("payment_methods", [])
+            
+            # If this is the first payment method, make it the default
+            if not existing_payment_methods:
+                new_payment_method["is_default"] = True
+            
+            # Add the new payment method to the database
+            response = requests.post(f"{BASE_URL}/payment_methods", json=new_payment_method)
+            response.raise_for_status()
+            created_payment_method = response.json()
+            
+            # Update the user's payment methods list
+            if "payment_methods" not in driver_data:
+                driver_data["payment_methods"] = []
+            driver_data["payment_methods"].append(payment_method_id)
+            
+            # Save the updated user data
+            update_response = requests.put(f"{BASE_URL}/users/{user['id']}", json=user)
+            update_response.raise_for_status()
+            
+            # Return the created payment method
+            return {
+                "id": created_payment_method["id"],
+                "payment_type": created_payment_method["payment_type"],
+                "display_name": created_payment_method["display_name"],
+                "is_default": created_payment_method["is_default"],
+                "created_at": created_payment_method["created_at"],
+                "updated_at": created_payment_method["updated_at"],
+                **{key: value for key, value in token_data.items() if key not in ["tokenized", "created"]}
+            }
+        
+        except requests.RequestException as e:
+            raise PaymentServiceError(f"Failed to add payment method: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping
+
+    @staticmethod
+    def get_driver_payment_methods(token: str) -> List[Dict[str, Any]]:
+        """
+        Get all payment methods for a driver to receive earnings.
+        
+        Args:
+            token: JWT token for authentication (drivers only)
+            
+        Returns:
+            List[Dict]: List of payment methods
+            
+        Raises:
+            PaymentServiceError: If payment methods retrieval fails
+            AuthError: If authentication fails
+        """
+        try:
+            # Verify token and ensure user is a driver
+            user = AuthService.require_user_type(token, [UserType.DRIVER.value])
+            
+            # Get driver data from user ID to access the payment_methods list
+            driver_data = _get_driver_data_from_user(user["id"])
+            payment_method_ids = driver_data.get("payment_methods", [])
+            
+            if not payment_method_ids:
+                return []
+            
+            # Fetch payment methods
+            payment_methods = []
+            for method_id in payment_method_ids:
+                try:
+                    response = requests.get(f"{BASE_URL}/payment_methods/{method_id}")
+                    if response.status_code == 200:
+                        method = response.json()
+                        
+                        # Create a safe version of the payment method to return
+                        safe_method = {
+                            "id": method["id"],
+                            "payment_type": method["payment_type"],
+                            "display_name": method["display_name"],
+                            "is_default": method["is_default"],
+                            "created_at": method["created_at"],
+                            "updated_at": method["updated_at"]
+                        }
+                        
+                        # Add non-sensitive fields from the token
+                        if "token" in method and isinstance(method["token"], dict):
+                            for key, value in method["token"].items():
+                                if key not in ["tokenized", "created"]:
+                                    safe_method[key] = value
+                                    
+                        payment_methods.append(safe_method)
+                except Exception:
+                    # Skip any payment methods that can't be retrieved
+                    continue
+            
+            return payment_methods
+        
+        except requests.RequestException as e:
+            raise PaymentServiceError(f"Failed to retrieve payment methods: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping
+
+    @staticmethod
+    def set_default_driver_payment_method(token: str, payment_method_id: str) -> Dict[str, Any]:
+        """
+        Set a payment method as the default for a driver to receive earnings.
+        
+        Args:
+            token: JWT token for authentication (drivers only)
+            payment_method_id: ID of the payment method to set as default
+            
+        Returns:
+            Dict: The updated payment method
+            
+        Raises:
+            PaymentServiceError: If setting default fails
+            AuthError: If authentication fails
+        """
+        try:
+            # Verify token and ensure user is a driver
+            user = AuthService.require_user_type(token, [UserType.DRIVER.value])
+            
+            # Get driver data from user ID to access the payment_methods list
+            driver_data = _get_driver_data_from_user(user["id"])
+            payment_method_ids = driver_data.get("payment_methods", [])
+            
+            if not payment_method_ids:
+                raise PaymentServiceError("You don't have any payment methods")
+                
+            # Check if the specified payment method exists and belongs to this user
+            if payment_method_id not in payment_method_ids:
+                raise PaymentServiceError("Payment method not found or doesn't belong to you")
+                
+            # Update all payment methods
+            for method_id in payment_method_ids:
+                try:
+                    # Get the payment method
+                    response = requests.get(f"{BASE_URL}/payment_methods/{method_id}")
+                    if response.status_code != 200:
+                        continue
+                        
+                    method = response.json()
+                    
+                    # Update is_default flag based on whether it matches the specified ID
+                    method["is_default"] = (method_id == payment_method_id)
+                    method["updated_at"] = datetime.now().isoformat()
+                    
+                    # Save updated payment method
+                    update_response = requests.put(f"{BASE_URL}/payment_methods/{method_id}", json=method)
+                    update_response.raise_for_status()
+                    
+                    # If this is the one being set as default, remember it to return
+                    if method_id == payment_method_id:
+                        default_method = method
+                except Exception:
+                    # Continue with other payment methods if one fails
+                    continue
+                    
+            # Create a safe version of the payment method to return
+            if 'default_method' not in locals():
+                raise PaymentServiceError("Failed to set payment method as default")
+                
+            safe_method = {
+                "id": default_method["id"],
+                "payment_type": default_method["payment_type"],
+                "display_name": default_method["display_name"],
+                "is_default": default_method["is_default"],
+                "created_at": default_method["created_at"],
+                "updated_at": default_method["updated_at"]
+            }
+            
+            # Add non-sensitive fields from the token
+            if "token" in default_method and isinstance(default_method["token"], dict):
+                for key, value in default_method["token"].items():
+                    if key not in ["tokenized", "created"]:
+                        safe_method[key] = value
+                        
+            return safe_method
+        
+        except requests.RequestException as e:
+            raise PaymentServiceError(f"Failed to set default payment method: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping
+
+    @staticmethod
+    def remove_driver_payment_method(token: str, payment_method_id: str) -> bool:
+        """
+        Remove a payment method for a driver.
+        
+        Args:
+            token: JWT token for authentication (drivers only)
+            payment_method_id: ID of the payment method to remove
+            
+        Returns:
+            bool: True if removal was successful
+            
+        Raises:
+            PaymentServiceError: If removal fails
+            AuthError: If authentication fails
+        """
+        try:
+            # Verify token and ensure user is a driver
+            user = AuthService.require_user_type(token, [UserType.DRIVER.value])
+            
+            # Get driver data from user ID to access the payment_methods list
+            driver_data = _get_driver_data_from_user(user["id"])
+            payment_method_ids = driver_data.get("payment_methods", [])
+            
+            if not payment_method_ids:
+                raise PaymentServiceError("You don't have any payment methods")
+                
+            # Check if the specified payment method exists and belongs to this user
+            if payment_method_id not in payment_method_ids:
+                raise PaymentServiceError("Payment method not found or doesn't belong to you")
+                
+            # Get the payment method to check if it's the default
+            response = requests.get(f"{BASE_URL}/payment_methods/{payment_method_id}")
+            if response.status_code != 200:
+                raise PaymentServiceError("Failed to retrieve payment method")
+                
+            method_to_delete = response.json()
+            is_default = method_to_delete.get("is_default", False)
+            
+            # Remove the payment method from the database
+            delete_response = requests.delete(f"{BASE_URL}/payment_methods/{payment_method_id}")
+            if delete_response.status_code not in [200, 204]:
+                raise PaymentServiceError("Failed to delete payment method")
+                
+            # Remove the payment method ID from the user's list
+            payment_method_ids.remove(payment_method_id)
+            driver_data["payment_methods"] = payment_method_ids
+            
+            # Update the user data
+            update_response = requests.put(f"{BASE_URL}/users/{user['id']}", json=user)
+            update_response.raise_for_status()
+            
+            # If the deleted method was the default, set a new default if available
+            if is_default and payment_method_ids:
+                # Get the first available payment method
+                new_default_id = payment_method_ids[0]
+                PaymentService.set_default_driver_payment_method(token, new_default_id)
+                
+            return True
+        
+        except requests.RequestException as e:
+            raise PaymentServiceError(f"Failed to remove payment method: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping
+
+    @staticmethod
+    def get_driver_payment_history(token: str, limit: int = 10, from_date: Optional[str] = None, to_date: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get payment history for a driver.
+        
+        Args:
+            token: JWT token for authentication (drivers only)
+            limit: Maximum number of transactions to return
+            from_date: Start date for filtering (ISO format)
+            to_date: End date for filtering (ISO format)
+            
+        Returns:
+            Dict: Payment history with transactions and summary
+            
+        Raises:
+            PaymentServiceError: If retrieval fails
+            AuthError: If authentication fails
+        """
+        try:
+            # Verify token and ensure user is a driver
+            user = AuthService.require_user_type(token, [UserType.DRIVER.value])
+            
+            # Get all payments where the driver is the recipient
+            response = requests.get(f"{BASE_URL}/payments")
+            if response.status_code != 200:
+                raise PaymentServiceError("Failed to retrieve payments")
+                
+            all_payments = response.json()
+            
+            # Filter payments for this driver
+            driver_payments = [payment for payment in all_payments 
+                            if payment.get("recipient_id") == user["id"]]
+            
+            # Apply date filters if provided
+            if from_date:
+                driver_payments = [payment for payment in driver_payments 
+                                if payment.get("timestamp", "") >= from_date]
+            
+            if to_date:
+                driver_payments = [payment for payment in driver_payments 
+                                if payment.get("timestamp", "") <= to_date]
+            
+            # Sort payments by timestamp (newest first)
+            driver_payments.sort(key=lambda p: p.get("timestamp", ""), reverse=True)
+            
+            # Limit the number of transactions
+            limited_payments = driver_payments[:limit]
+            
+            # Prepare detailed transaction list
+            transactions = []
+            for payment in limited_payments:
+                # Get payment method details
+                payment_method = None
+                if payment.get("payment_method_id"):
+                    try:
+                        method_response = requests.get(f"{BASE_URL}/payment_methods/{payment['payment_method_id']}")
+                        if method_response.status_code == 200:
+                            method = method_response.json()
+                            payment_method = {
+                                "id": method["id"],
+                                "display_name": method["display_name"],
+                                "payment_type": method["payment_type"]
+                            }
+                    except Exception:
+                        pass
+                
+                # Create transaction entry
+                transactions.append({
+                    "id": payment.get("id"),
+                    "amount": payment.get("amount", 0),
+                    "status": payment.get("status", "UNKNOWN"),
+                    "timestamp": payment.get("timestamp", ""),
+                    "ride_id": payment.get("ride_id", ""),
+                    "payment_method": payment_method
+                })
+            
+            # Calculate summary statistics
+            total_earned = sum(payment.get("amount", 0) for payment in driver_payments 
+                            if payment.get("status") == "COMPLETED")
+            
+            pending_amount = sum(payment.get("amount", 0) for payment in driver_payments 
+                            if payment.get("status") in ["PENDING", "PROCESSING"])
+            
+            # Return the payment history
+            return {
+                "total_earned": total_earned,
+                "pending_amount": pending_amount,
+                "transactions": transactions,
+                "transaction_count": len(transactions)
+            }
+        
+        except requests.RequestException as e:
+            raise PaymentServiceError(f"Failed to retrieve payment history: {str(e)}")
+        except AuthError:
+            raise  # Re-throw auth errors without wrapping
+
+    # Helper function to get driver data from user ID
+    def _get_driver_data_from_user(user_id: str) -> Dict[str, Any]:
+        """Get driver-specific data from a user record."""
+        try:
+            # Get the user data
+            response = requests.get(f"{BASE_URL}/users/{user_id}")
+            if response.status_code != 200:
+                raise PaymentServiceError("Failed to retrieve user data")
+                
+            user_data = response.json()
+            
+            # Return the driver data
+            return user_data
+        
+        except requests.RequestException as e:
+            raise PaymentServiceError(f"Failed to retrieve driver data: {str(e)}")
+
+
+    def _detect_card_type(card_number: str) -> str:
+        """
+        Detect credit card type based on the card number.
+        
+        Args:
+            card_number: Credit card number
+            
+        Returns:
+            str: Card type (VISA, MASTERCARD, AMEX, etc.)
+        """
+        # Remove spaces and dashes
+        number = card_number.replace(" ", "").replace("-", "")
+        
+        # Check for VISA
+        if number.startswith('4'):
+            return "VISA"
+        
+        # Check for Mastercard
+        if number.startswith('5') and 1 <= int(number[1]) <= 5:
+            return "MASTERCARD"
+        
+        # Check for American Express
+        if number.startswith(('34', '37')):
+            return "AMEX"
+        
+        # Check for Discover
+        if number.startswith('6'):
+            return "DISCOVER"
+        
+        # Default
+        return "UNKNOWN"
+

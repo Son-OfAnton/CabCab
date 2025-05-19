@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 from app.models.payment import PaymentMethod, PaymentStatus, Payment
+from app.models.ride import RideStatus
 from app.services.auth_service import AuthService, AuthError, UserType
 
 # Base URL for our custom JSON server
@@ -894,6 +895,121 @@ class PaymentService:
                 f"Failed to retrieve payment history: {str(e)}")
         except AuthError:
             raise  # Re-throw auth errors without wrapping
+
+    @staticmethod
+    def process_ride_payment(ride_id: str, user_id: str, amount: float, payment_method_id: str, driver_id: str) -> Dict[str, Any]:
+        """
+        Process payment for a completed ride, including admin commission if applicable.
+
+        Args:
+            ride_id: ID of the ride
+            user_id: ID of the user making the payment
+            amount: Payment amount
+            payment_method_id: ID of the payment method to use
+            driver_id: ID of the driver to receive payment
+
+        Returns:
+            Dict: Payment details including commission data
+
+        Raises:
+            PaymentServiceError: If payment processing fails
+        """
+        try:
+            # Check if commission is active
+            try:
+                commission_response = requests.get(f"{BASE_URL}/commissions/query?is_active=true")
+                active_commissions = commission_response.json() if commission_response.status_code == 200 else []
+                
+                commission_active = bool(active_commissions)
+            except:
+                commission_active = False
+                
+            # Create main payment record
+            payment_id = str(uuid4())
+            payment = {
+                "id": payment_id,
+                "ride_id": ride_id,
+                "user_id": user_id,
+                "amount": amount,
+                "payment_method_id": payment_method_id,
+                "status": PaymentStatus.COMPLETED.value,
+                "transaction_id": f"txn_{uuid4().hex[:10]}",
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+                "is_refunded": False
+            }
+            
+            commission_data = None
+            
+            if commission_active and active_commissions:
+                # Get the commission settings
+                commission_setting = active_commissions[0]
+                commission_percentage = float(commission_setting.get("percentage", 10.0)) / 100.0
+                
+                # Calculate commission and driver amounts
+                commission_amount = round(amount * commission_percentage, 2)
+                driver_amount = amount - commission_amount
+                
+                # Update the main payment with driver's portion
+                payment["amount"] = driver_amount
+                payment["driver_id"] = driver_id
+                
+                # Create commission payment record
+                admin_id = commission_setting.get("admin_id")
+                admin_payment_method_id = commission_setting.get("payment_method_id")
+                
+                if admin_id and admin_payment_method_id:
+                    commission_payment_id = str(uuid4())
+                    commission_payment = {
+                        "id": commission_payment_id,
+                        "ride_id": ride_id,
+                        "user_id": user_id,
+                        "admin_id": admin_id,
+                        "amount": commission_amount,
+                        "payment_method_id": admin_payment_method_id,
+                        "status": PaymentStatus.COMPLETED.value,
+                        "transaction_id": f"txn_comm_{uuid4().hex[:10]}",
+                        "created_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat(),
+                        "is_refunded": False,
+                        "is_commission": True,
+                        "original_payment_id": payment_id
+                    }
+                    
+                    # Save commission payment
+                    commission_response = requests.post(f"{BASE_URL}/payments", json=commission_payment)
+                    commission_response.raise_for_status()
+                    commission_data = commission_response.json()
+            else:
+                # No commission, the driver gets the full amount
+                payment["driver_id"] = driver_id
+            
+            # Save the main payment
+            response = requests.post(f"{BASE_URL}/payments", json=payment)
+            response.raise_for_status()
+            payment_data = response.json()
+            
+            # Update the ride with the payment information
+            ride_response = requests.get(f"{BASE_URL}/rides/{ride_id}")
+            if ride_response.status_code == 200:
+                ride = ride_response.json()
+                ride["payment_id"] = payment_id
+                ride["status"] = RideStatus.COMPLETED.name
+                ride["end_time"] = datetime.now().isoformat()
+                ride["actual_fare"] = amount
+                
+                requests.put(f"{BASE_URL}/rides/{ride_id}", json=ride)
+            
+            # Prepare the response with payment and commission details
+            result = {
+                "payment": payment_data,
+                "commission": commission_data
+            }
+            
+            return result
+            
+        except requests.RequestException as e:
+            raise PaymentServiceError(f"Failed to process payment: {str(e)}")
 
 # Helper function to get driver data from user ID
 

@@ -5,6 +5,7 @@ from app.models.vehicle import Vehicle
 from app.models.ride import Ride, RideStatus
 from app.models.location import Location
 from app.models.payment import Payment, PaymentMethod
+from app.models.commission import CommissionSetting
 
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     'Location',
     'Payment',
     'PaymentMethod',
+    'CommissionSetting'
 ]

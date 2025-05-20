@@ -8,6 +8,7 @@ from app.cli_module.commands.vehicle_commands import vehicle_group
 from app.cli_module.commands.admin_commands import admin_group
 from app.cli_module.commands.driver_commands import driver_group
 from app.cli_module.commands.auth_commands import auth_group
+from app.cli_module.commands.admin_commision_commands import commission_group
 import click
 
 # Set context settings to properly display help for all commands
@@ -35,6 +36,7 @@ cli.add_command(ride_group)
 cli.add_command(payment_group)  # Register the payment command group
 cli.add_command(driver_payment_group)
 cli.add_command(run_command)
+cli.add_command(commission_group)  # Register the commission command group
 
 def main():
     """Entry point for the application."""

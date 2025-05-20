@@ -3,7 +3,7 @@
 import os
 import json
 import requests
-import uuid
+import uuid 
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
@@ -925,7 +925,7 @@ class PaymentService:
                 commission_active = False
                 
             # Create main payment record
-            payment_id = str(uuid4())
+            payment_id = str(uuid.uuid4())
             payment = {
                 "id": payment_id,
                 "ride_id": ride_id,
@@ -933,7 +933,7 @@ class PaymentService:
                 "amount": amount,
                 "payment_method_id": payment_method_id,
                 "status": PaymentStatus.COMPLETED.value,
-                "transaction_id": f"txn_{uuid4().hex[:10]}",
+                "transaction_id": f"txn_{uuid.uuid4().hex[:10]}",
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat(),
                 "is_refunded": False
@@ -959,7 +959,7 @@ class PaymentService:
                 admin_payment_method_id = commission_setting.get("payment_method_id")
                 
                 if admin_id and admin_payment_method_id:
-                    commission_payment_id = str(uuid4())
+                    commission_payment_id = str(uuid.uuid4())
                     commission_payment = {
                         "id": commission_payment_id,
                         "ride_id": ride_id,
@@ -968,7 +968,7 @@ class PaymentService:
                         "amount": commission_amount,
                         "payment_method_id": admin_payment_method_id,
                         "status": PaymentStatus.COMPLETED.value,
-                        "transaction_id": f"txn_comm_{uuid4().hex[:10]}",
+                        "transaction_id": f"txn_comm_{uuid.uuid4().hex[:10]}",
                         "created_at": datetime.now().isoformat(),
                         "updated_at": datetime.now().isoformat(),
                         "is_refunded": False,
